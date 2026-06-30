@@ -74,6 +74,17 @@ def pdf_to_images(pdf_path, output_folder, prefix):
 
         pix.save(output_path)
 
+        # # Preprocess image (RGB, denoising) and normalize orientation
+        # img = cv2.imread(output_path)
+        # if img is not None:
+        #     # Ensure RGB
+        #     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        #     # Optional denoising
+        #     img = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
+        #     # Convert back to BGR for cv2.imwrite
+        #     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        #     cv2.imwrite(output_path, img)
+
         normalize_orientation(output_path)
 
         image_paths.append(output_path)
@@ -96,6 +107,14 @@ def image_to_png(image_path, output_folder, prefix):
     )
 
     img.save(output_path)
+
+    # # Preprocess image (RGB, denoising)
+    # cv_img = cv2.imread(output_path)
+    # if cv_img is not None:
+    #     cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    #     cv_img = cv2.fastNlMeansDenoisingColored(cv_img, None, 10, 10, 7, 21)
+    #     cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
+    #     cv2.imwrite(output_path, cv_img)
 
     normalize_orientation(output_path)
 

@@ -13,7 +13,7 @@ from extractor import extract_information
 
 excel_file = "Medical_Claim_Data_Part_1.xlsx"
 excel_info = pd.ExcelFile(excel_file)
-print(f"\n📁 Sheets found in your Excel file: {excel_info.sheet_names}")
+print(f"\n Sheets found in your Excel file: {excel_info.sheet_names}")
 
 target_sheet_name = "Medical Data Verification-Par1"
 
@@ -23,7 +23,7 @@ df = pd.read_excel(excel_file, sheet_name=target_sheet_name)
 df.columns = df.columns.str.strip() 
 
 # Print out exactly what Pandas thinks your columns are
-print("\n🔍 Columns Pandas actually sees:")
+print("\n Columns Pandas actually sees:")
 print(df.columns.tolist())
 print("-" * 50 + "\n")
 # ----------------------
@@ -104,7 +104,7 @@ with sync_playwright() as p:
     
     # --- THE HUMAN HANDOFF ---
     print("\n" + "="*50)
-    print("⏸️ AI PAUSED FOR HUMAN SETUP")
+    print("AI PAUSED FOR HUMAN SETUP")
     print("1. Maximize the window now if you want to.")
     print("2. Log in manually.")
     print("3. Click on the 'Claims' section.")
@@ -112,7 +112,7 @@ with sync_playwright() as p:
     print("5. Click the 3 bars on the column, click the funnel, and leave the text box open.")
     print("="*50 + "\n")
     
-    input("👉 Press ENTER here in the terminal when you are ready to start the loop...")
+    input("Press ENTER here in the terminal when you are ready to start the loop...")
     print("Starting automated extraction...")
 
     for index, row in df.head(5).iterrows():
@@ -287,7 +287,7 @@ with sync_playwright() as p:
             new_page.close()
 
         except Exception as e:
-            print(f"❌ Error processing {ack_no}: {e}")
+            print(f"Error processing {ack_no}: {e}")
             continue
 
 df.to_excel(

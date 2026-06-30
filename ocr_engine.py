@@ -1,29 +1,49 @@
-import easyocr
-import torch
+import paddle
+from paddleocr import PaddleOCR
 
-print("Loading EasyOCR model...")
+print("Loading PaddleOCR model...")
 
-print("Torch version:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
+cuda_available = paddle.device.is_compiled_with_cuda()
+print(f"CUDA Available: {cuda_available}")
 
-if torch.cuda.is_available():
-    print("GPU:", torch.cuda.get_device_name(0))
+if cuda_available:
+    print("Compiled with CUDA: True")
+    # Determine device and name
+    current_device = paddle.device.get_device()
+    print(f"Current Device: {current_device}")
+    try:
+        # gpu_id will be like 'gpu:0'
+        if 'gpu' in current_device:
+            gpu_id = int(current_device.split(':')[1])
+            gpu_name = paddle.device.cuda.get_device_name(gpu_id)
+            print(f"GPU Name: {gpu_name}")
+    except Exception:
+        pass
 else:
-    print("CUDA not available!")
+    print("Compiled with CUDA: False")
 
-reader = easyocr.Reader(
-    ['en'],
-    gpu=torch.cuda.is_available()
-)
+# Initialize globally so we don't reload the model on every page.
+# Using standard parameters for orientation classification and high accuracy.
+ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=cuda_available)
 
-print("EasyOCR ready.")
+print("PaddleOCR ready.")
 
 def ocr_image(image_path):
-
-    results = reader.readtext(
-        image_path,
-        detail=0,
-        paragraph=True
-    )
-
-    return "\n".join(results)
+    try:
+        # Perform OCR
+        result = ocr.ocr(image_path, cls=True)
+        
+        if not result or not result[0]:
+            return ""
+        
+        lines = []
+        # result[0] contains a list of lines for the image
+        for line in result[0]:
+            if line and len(line) > 1:
+                text = line[1][0]
+                lines.append(text)
+                
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"PaddleOCR Error on {image_path}: {e}")
+        return ""
