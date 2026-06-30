@@ -1,3 +1,17 @@
+import os
+import site
+import glob
+
+# Ensure all NVIDIA bin directories (cuDNN, cuBLAS, etc.) are in PATH
+site_packages = site.getsitepackages()
+if site_packages:
+    nvidia_path = os.path.join(site_packages[0], 'nvidia')
+    if os.path.exists(nvidia_path):
+        for lib_dir in glob.glob(os.path.join(nvidia_path, '*', 'bin')):
+            os.environ['PATH'] = lib_dir + os.pathsep + os.environ.get('PATH', '')
+            if hasattr(os, 'add_dll_directory'):
+                os.add_dll_directory(lib_dir)
+
 import paddle
 from paddleocr import PaddleOCR
 
