@@ -1,0 +1,8 @@
+pandas
+playwright
+beautifulsoup4
+pymupdf
+opencv-python
+Pillow
+easyocr
+ollama

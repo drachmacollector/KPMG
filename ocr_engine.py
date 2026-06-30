@@ -1,10 +1,19 @@
 import easyocr
+import torch
 
-print("Loading EasyOCR model... (first run may take 20-60 seconds)")
+print("Loading EasyOCR model...")
+
+print("Torch version:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+else:
+    print("CUDA not available!")
 
 reader = easyocr.Reader(
     ['en'],
-    gpu=True     # we'll enable GPU later
+    gpu=torch.cuda.is_available()
 )
 
 print("EasyOCR ready.")

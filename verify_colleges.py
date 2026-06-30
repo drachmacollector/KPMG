@@ -5,11 +5,11 @@ import re
 import os
 import urllib.request
 from bs4 import BeautifulSoup
-from MAHABOCW.document_processor import normalize_document
-from MAHABOCW.document_processor import calculate_sha256
+from document_processor import normalize_document
+from document_processor import calculate_sha256
 
 from ocr_engine import ocr_image
-from MAHABOCW.extractor import extract_information
+from extractor import extract_information
 
 excel_file = "Medical_Claim_Data_Part_1.xlsx"
 excel_info = pd.ExcelFile(excel_file)
@@ -159,7 +159,7 @@ with sync_playwright() as p:
             
             # Wait for page to finish loading
             print("Claim form opened.")
-            new_page.wait_for_selector("label", timeout=10000)
+            new_page.wait_for_selector("label", timeout=20000)
             time.sleep(1)
 
             html = new_page.content()

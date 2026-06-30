@@ -31,7 +31,7 @@ If it IS relevant, return ONLY valid JSON in this format:
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 0.98
+  "confidence": 
 }
 
 or
@@ -43,7 +43,7 @@ or
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 0.98
+  "confidence": 
 }
 
 Rules:
