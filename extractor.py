@@ -31,7 +31,7 @@ If it IS relevant, return ONLY valid JSON in this format:
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 
+  "confidence": 0.95
 }
 
 or
@@ -43,18 +43,84 @@ or
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 
+  "confidence": 0.95
 }
 
-Rules:
+--- FIELD DEFINITIONS ---
 
-- Never invent information.
-- If college name is missing, use null.
-- If address is missing, use null.
+FIELD 1 — college_name
+
+This should contain the official institution name followed ONLY by the locality or city
+if it forms part of the institution's commonly used identity.
+
+Good examples:
+  "Takhatmal Shrivallabh Homoeopathic Medical College & Hospital, Rajapeth, Amravati"
+  "Gondia Homoeopathic Medical College & Hospital, Surya Tola, Gondia"
+
+Rules for college_name:
+  - Do NOT include PIN codes.
+  - Do NOT include district names unless they are part of the institution's official name.
+  - Do NOT include state names.
+  - Do NOT include building names.
+  - Do NOT include campus-only addresses unless commonly used to identify the institution.
+  - If the college name is genuinely missing, use null.
+
+FIELD 2 — college_address
+
+This should contain the COMPLETE postal address exactly as it appears in the document.
+
+Include everything available:
+  Campus name, road, area, PIN code, district, state.
+
+Good examples:
+  "HOMOEO SADAN, RAJAPETH, AMRAVATI-444606"
+  "GHMC CAMPUS, SURYA TOLA, GONDIA-441614, DISTRICT GONDIA, MAHARASHTRA"
+
+Rules for college_address:
+  - Preserve punctuation wherever possible.
+  - If the address is genuinely missing, use null.
+
+--- CONFIDENCE FIELD ---
+
+confidence:
+  Return a decimal number between 0 and 1 representing your confidence in the extraction.
+  Examples: 0.97, 0.81, 0.42
+  NEVER return null.
+  NEVER omit this field.
+  NEVER leave it blank.
+
+--- OCR CORRECTION RULES ---
+
+Never invent missing information.
+
+However, you SHOULD correct obvious OCR mistakes, including:
+  - missing spaces
+  - missing commas
+  - incorrect capitalisation
+  - obvious spelling mistakes
+when the intended text is clear from context.
+
+Do NOT guess if multiple interpretations are equally plausible.
+
+--- OUTPUT RULES ---
+
 - Never include markdown.
 - Never explain.
 - Output JSON only.
 """
+
+
+def is_satisfactory(result):
+    """Return True only when the result contains usable college data."""
+    if result is None:
+        return False
+    if not result.get("relevant"):
+        return False
+    if not (result.get("college_name") or "").strip():
+        return False
+    if not (result.get("college_address") or "").strip():
+        return False
+    return True
 
 
 def extract_information(ocr_text):
@@ -75,12 +141,11 @@ def extract_information(ocr_text):
 
     content = response["message"]["content"].strip()
 
-# Replace the start/end string slicing with this regex search:
     json_match = re.search(r'\{.*?\}', content, re.DOTALL)
-    
+
     if json_match:
         content = json_match.group(0)
-    
+
     try:
         return json.loads(content)
     except Exception:
