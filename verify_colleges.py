@@ -11,6 +11,7 @@ from document_processor import calculate_sha256
 
 from ocr_engine import ocr_image
 from extractor import extract_information, is_satisfactory
+from web_resolver import resolve_institution
 
 # ---------------------------------------------------------------------------
 # CONFIGURATION
@@ -50,6 +51,9 @@ if 'accuracy' not in df.columns:
 
 if 'manual_review' not in df.columns:
     df['manual_review'] = ""
+
+if 'online_verification_status' not in df.columns:
+    df['online_verification_status'] = ""
 
 
 def download_document(url, save_path):
@@ -249,8 +253,20 @@ def write_result(df, index, best_result, ocr_metrics):
         college_name    = (best_result.get("college_name")    or "").strip()
         college_address = (best_result.get("college_address") or "").strip()
 
-        df.loc[index, "corrected_college_name"]    = college_name.upper()
-        df.loc[index, "corrected_college_address"] = college_address.upper()
+        # ------------------------------------------------------------------
+        # Online Institution Resolution
+        # Pass the noisy Qwen output through the web resolver to get the
+        # verified official name and address.  On any failure the resolver
+        # returns the original values and sets resolution_failed=True.
+        # ------------------------------------------------------------------
+        resolved = resolve_institution(
+            extracted_name=college_name,
+            extracted_address=college_address,
+        )
+
+        df.loc[index, "corrected_college_name"]    = resolved["verified_college_name"].upper()
+        df.loc[index, "corrected_college_address"] = resolved["verified_college_address"].upper()
+        df.loc[index, "online_verification_status"] = "FAILED" if resolved["resolution_failed"] else ""
 
     # Flag for manual review when accuracy is below the threshold
     # OR when no usable result was obtained at all.
@@ -315,7 +331,7 @@ with sync_playwright() as p:
 #
 #
 
-    for index, row in df.iterrows():
+    for index, row in df.head(5).iterrows():
         ack_no = str(row['acknowledgement_no']).strip()
 
         claim_folder = os.path.join("downloads", ack_no)
