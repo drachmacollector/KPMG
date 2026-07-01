@@ -9,3 +9,6 @@ pytesseract
 tqdm
 paddlepaddle
 paddleocr
+google-generativeai
+google-search-results
+python-dotenv
