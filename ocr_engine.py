@@ -22,11 +22,9 @@ print(f"CUDA Available: {cuda_available}")
 
 if cuda_available:
     print("Compiled with CUDA: True ✅")
-    # Determine device and name
     current_device = paddle.device.get_device()
     print(f"Current Device: {current_device}")
     try:
-        # gpu_id will be like 'gpu:0'
         if 'gpu' in current_device:
             gpu_id = int(current_device.split(':')[1])
             gpu_name = paddle.device.cuda.get_device_name(gpu_id)
@@ -37,31 +35,67 @@ else:
     print("Compiled with CUDA: False")
 
 # Initialize globally so we don't reload the model on every page.
-# Using standard parameters for orientation classification and high accuracy.
+# use_angle_cls=True enables PaddleOCR's built-in 0°/180° classifier.
+# 90°/270° rotation is handled upstream in document_processor.py via Tesseract OSD.
 ocr = PaddleOCR(
     use_angle_cls=True,
     lang="en",
     use_gpu=cuda_available,
-    show_log=False,   # <- important
+    show_log=False,
 )
 print("PaddleOCR ready.")
 
+
 def ocr_image(image_path):
+    """
+    Run PaddleOCR on an image and return a dict with:
+
+      text           - All detected lines joined by newlines (str)
+      avg_confidence - Mean per-line confidence score (float 0–1)
+      min_confidence - Worst single-line confidence score (float 0–1)
+      high_conf_ratio- Fraction of lines with confidence >= 0.80 (float 0–1)
+      line_count     - Total number of text lines detected (int)
+
+    Returns a dict with text="" and all metrics = 0.0 / 0 on failure.
+    """
+    empty_result = {
+        "text": "",
+        "avg_confidence": 0.0,
+        "min_confidence": 0.0,
+        "high_conf_ratio": 0.0,
+        "line_count": 0,
+    }
+
     try:
-        # Perform OCR
         result = ocr.ocr(image_path, cls=True)
-        
+
         if not result or not result[0]:
-            return ""
-        
+            return empty_result
+
         lines = []
-        # result[0] contains a list of lines for the image
+        confidences = []
+
         for line in result[0]:
             if line and len(line) > 1:
                 text = line[1][0]
+                conf = float(line[1][1])   # PaddleOCR confidence score 0–1
                 lines.append(text)
-                
-        return "\n".join(lines)
+                confidences.append(conf)
+
+        if not lines:
+            return empty_result
+
+        HIGH_CONF_THRESHOLD = 0.80
+        high_conf_count = sum(1 for c in confidences if c >= HIGH_CONF_THRESHOLD)
+
+        return {
+            "text": "\n".join(lines),
+            "avg_confidence":  round(sum(confidences) / len(confidences), 4),
+            "min_confidence":  round(min(confidences), 4),
+            "high_conf_ratio": round(high_conf_count / len(confidences), 4),
+            "line_count":      len(lines),
+        }
+
     except Exception as e:
         print(f"PaddleOCR Error on {image_path}: {e}")
-        return ""
+        return empty_result

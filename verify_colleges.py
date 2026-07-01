@@ -12,11 +12,21 @@ from document_processor import calculate_sha256
 from ocr_engine import ocr_image
 from extractor import extract_information, is_satisfactory
 
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
+
 excel_file = "Medical_Claim_Data_Part_1.xlsx"
+target_sheet_name = "Medical Data Verification-Par1"
+
+# Rows with accuracy below this threshold are flagged for manual review.
+# Adjust between 0 and 100 as needed.
+ACCURACY_THRESHOLD = 80
+
+# ---------------------------------------------------------------------------
+
 excel_info = pd.ExcelFile(excel_file)
 print(f"\n 📃 Sheets found in your Excel file: {excel_info.sheet_names}")
-
-target_sheet_name = "Medical Data Verification-Par1"
 
 print(f"📖 Reading data from sheet: '{target_sheet_name}'...")
 df = pd.read_excel(excel_file, sheet_name=target_sheet_name)
@@ -35,8 +45,12 @@ if 'corrected_college_name' not in df.columns:
 if 'corrected_college_address' not in df.columns:
     df['corrected_college_address'] = ""
 
+if 'accuracy' not in df.columns:
+    df['accuracy'] = ""
+
 if 'manual_review' not in df.columns:
     df['manual_review'] = ""
+
 
 def download_document(url, save_path):
     try:
@@ -53,8 +67,73 @@ os.makedirs("downloads", exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# Download a subset of documents and return (pages, raw_file_paths) for those
-# that were successfully normalised.  Deduplication is handled via SHA-256.
+# ACCURACY SCORING
+# ---------------------------------------------------------------------------
+
+def compute_accuracy(ocr_metrics_list, llm_result):
+    """
+    Compute a programmatic accuracy score (0–100) from objective signals.
+
+    Parameters
+    ----------
+    ocr_metrics_list : list[dict]
+        One dict per processed page, each containing:
+          avg_confidence, min_confidence, high_conf_ratio, line_count
+        (as returned by ocr_engine.ocr_image).
+    llm_result : dict | None
+        The best LLM extraction result for the claim.
+
+    Returns
+    -------
+    int
+        Accuracy score 0–100.
+
+    Scoring breakdown (100 points total):
+      OCR quality signals  (40 pts max)
+        avg_confidence × 25        → up to 25 pts  (scales 0→1)
+        high_conf_ratio × 10       → up to 10 pts  (% high-quality lines)
+        min_confidence >= 0.60     →      5 pts     (binary bonus)
+      Extraction completeness      (60 pts max)
+        student_name extracted     → 10 pts
+        college_name extracted     → 20 pts
+        college_address extracted  → 20 pts
+        academic_year extracted    →  5 pts
+        document_type identified   →  5 pts
+    """
+    # --- OCR quality ---
+    if ocr_metrics_list:
+        avg_conf     = sum(m["avg_confidence"]  for m in ocr_metrics_list) / len(ocr_metrics_list)
+        min_conf     = min(m["min_confidence"]  for m in ocr_metrics_list)
+        high_ratio   = sum(m["high_conf_ratio"] for m in ocr_metrics_list) / len(ocr_metrics_list)
+    else:
+        avg_conf = min_conf = high_ratio = 0.0
+
+    ocr_score  = round(avg_conf * 25)          # 0–25
+    ocr_score += round(high_ratio * 10)        # 0–10
+    ocr_score += 5 if min_conf >= 0.60 else 0  # 0–5
+    ocr_score  = min(ocr_score, 40)            # cap at 40
+
+    # --- Extraction completeness ---
+    extraction_score = 0
+    if llm_result and llm_result.get("relevant"):
+        if (llm_result.get("student_name") or "").strip():
+            extraction_score += 10
+        if (llm_result.get("college_name") or "").strip():
+            extraction_score += 20
+        if (llm_result.get("college_address") or "").strip():
+            extraction_score += 20
+        if (llm_result.get("academic_year") or "").strip():
+            extraction_score += 5
+        if (llm_result.get("document_type") or "").strip():
+            extraction_score += 5
+
+    total = min(ocr_score + extraction_score, 100)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Download a subset of documents and return pages for those successfully
+# normalised. Deduplication is handled via SHA-256.
 # ---------------------------------------------------------------------------
 def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, processed_hashes):
     """Download `doc_subset` keys from `documents`, normalize, return page list."""
@@ -97,20 +176,48 @@ def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, pr
 
 
 def ocr_and_extract(page_paths):
-    """OCR each page and run LLM extraction. Returns best result or None."""
+    """
+    OCR each page and run LLM extraction.
+
+    Returns
+    -------
+    tuple(dict | None, list[dict])
+        (best_result, all_ocr_metrics)
+        best_result      — best LLM result (bonafide preferred over student_id)
+        all_ocr_metrics  — list of per-page OCR metric dicts for accuracy scoring
+    """
     bonafide_result = None
     student_id_result = None
+    all_ocr_metrics = []
 
     for page in page_paths:
         print(f"\n  OCR -> {page}")
 
-        text = ocr_image(page)
+        ocr_result = ocr_image(page)
 
-        if not text.strip():
+        # Collect metrics regardless of whether the page is relevant
+        all_ocr_metrics.append({
+            "avg_confidence":  ocr_result["avg_confidence"],
+            "min_confidence":  ocr_result["min_confidence"],
+            "high_conf_ratio": ocr_result["high_conf_ratio"],
+            "line_count":      ocr_result["line_count"],
+        })
+
+        ocr_text = ocr_result["text"]
+
+        if not ocr_text.strip():
+            print(f"  No text detected on {page}.")
             continue
 
+        print(
+            f"  OCR metrics — avg_conf={ocr_result['avg_confidence']:.2%}  "
+            f"min_conf={ocr_result['min_confidence']:.2%}  "
+            f"high_ratio={ocr_result['high_conf_ratio']:.2%}  "
+            f"lines={ocr_result['line_count']}"
+        )
+
         try:
-            result = extract_information(text)
+            result = extract_information(ocr_text)
         except Exception as e:
             print(f"  LLM failed on {page}: {e}")
             continue
@@ -128,24 +235,29 @@ def ocr_and_extract(page_paths):
             if student_id_result is None:
                 student_id_result = result
 
-    if bonafide_result:
-        return bonafide_result
-    if student_id_result:
-        return student_id_result
-    return None
+    best_result = bonafide_result or student_id_result
+    return best_result, all_ocr_metrics
 
 
-def write_result(df, index, best_result):
-    """Write extraction result into the dataframe row."""
-    if best_result:
-        college_name = (best_result.get("college_name") or "").strip()
+def write_result(df, index, best_result, ocr_metrics):
+    """Write extraction result and accuracy score into the dataframe row."""
+    accuracy = compute_accuracy(ocr_metrics, best_result)
+
+    df.loc[index, "accuracy"] = f"{accuracy}%"
+
+    if best_result and best_result.get("relevant"):
+        college_name    = (best_result.get("college_name")    or "").strip()
         college_address = (best_result.get("college_address") or "").strip()
 
-        df.loc[index, "corrected_college_name"] = college_name.upper()
+        df.loc[index, "corrected_college_name"]    = college_name.upper()
         df.loc[index, "corrected_college_address"] = college_address.upper()
-        df.loc[index, "manual_review"] = ""
-    else:
-        df.loc[index, "manual_review"] = "YES"
+
+    # Flag for manual review when accuracy is below the threshold
+    # OR when no usable result was obtained at all.
+    needs_review = (accuracy < ACCURACY_THRESHOLD) or (not best_result) or (not best_result.get("relevant"))
+    df.loc[index, "manual_review"] = "YES" if needs_review else ""
+
+    print(f"  Accuracy: {accuracy}%  |  Manual review: {'YES' if needs_review else 'NO'}")
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +392,9 @@ with sync_playwright() as p:
             # Shared deduplication tracker across both phases
             processed_hashes = {}
 
+            # Accumulate OCR metrics across both phases for accuracy scoring
+            all_ocr_metrics = []
+
             # ---------------------------------------------------------------
             # PHASE 1 — Fast path: Bonafide + College ID only
             # ---------------------------------------------------------------
@@ -292,11 +407,12 @@ with sync_playwright() as p:
 
             if phase1_pages:
                 print(f"\n[Phase 1]⏳ Running OCR + LLM on {len(phase1_pages)} page(s)...")
-                best_result = ocr_and_extract(phase1_pages)
+                best_result, phase1_metrics = ocr_and_extract(phase1_pages)
+                all_ocr_metrics.extend(phase1_metrics)
 
             if is_satisfactory(best_result):
                 print("\n[Phase 1] SUCCESS — satisfactory result obtained.")
-                write_result(df, index, best_result)
+                write_result(df, index, best_result, all_ocr_metrics)
 
             else:
                 # ---------------------------------------------------------------
@@ -311,20 +427,15 @@ with sync_playwright() as p:
                 )
 
                 if phase2_new_pages:
-                    # Combine Phase 1 pages (already OCR'd above) with new pages.
-                    # We only need to OCR the NEW pages; pass the combined set for
-                    # a single unified selection pass.
                     print(f"\n[Phase 2] Running OCR + LLM on {len(phase2_new_pages)} new page(s)...")
-                    phase2_result = ocr_and_extract(phase2_new_pages)
+                    phase2_result, phase2_metrics = ocr_and_extract(phase2_new_pages)
+                    all_ocr_metrics.extend(phase2_metrics)
 
                     # Prefer Phase 2 result if satisfactory; else keep Phase 1 result
-                    # (even if it isn't fully satisfactory, partial data is better than none)
                     if is_satisfactory(phase2_result):
                         best_result = phase2_result
                         print("[Phase 2] SUCCESS — satisfactory result from fallback docs.")
                     elif phase2_result and phase2_result.get("relevant"):
-                        # Phase 2 gave a relevant but incomplete result;
-                        # use whichever has more data
                         if not is_satisfactory(best_result):
                             best_result = phase2_result
                         print("[Phase 2] Partial result — using best available.")
@@ -333,7 +444,7 @@ with sync_playwright() as p:
                 else:
                     print("[Phase 2] No new pages could be downloaded/normalised.")
 
-                write_result(df, index, best_result)
+                write_result(df, index, best_result, all_ocr_metrics)
 
             df.to_excel(
                 "Medical_Claim_Data_Output.xlsx",

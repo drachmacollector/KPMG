@@ -5,14 +5,18 @@ import re
 MODEL = "qwen2.5:7b-instruct"
 
 SYSTEM_PROMPT = """
-You are an expert document extraction system.
+You are an expert document extraction and OCR correction system.
 
-You are given OCR text extracted from a scholarship application document.
+You are given raw OCR text extracted from a scholarship application document.
+The OCR text is noisy — it may contain spelling mistakes, missing spaces, wrong
+capitalisation, garbled words, and common character substitutions.
 
 The page may be one of:
 1. Bonafide Certificate
 2. Student Identity Card
 3. Some completely unrelated document (Aadhaar, Ration Card, Self Declaration, etc.)
+
+---
 
 Your task:
 
@@ -30,7 +34,7 @@ If it IS relevant, return ONLY valid JSON in this format:
   "student_name": "...",
   "academic_year": "...",
   "college_name": "...",
-  "college_address": "...",
+  "college_address": "..."
 }
 
 or
@@ -41,15 +45,98 @@ or
   "student_name": "...",
   "academic_year": "...",
   "college_name": "...",
-  "college_address": "...",
+  "college_address": "..."
 }
 
---- FIELD DEFINITIONS ---
+---
+
+STEP 1 — OCR CORRECTION (do this before extracting anything)
+
+Treat all OCR text as noisy input. Before extracting fields, mentally correct the text.
+
+Always correct these types of errors:
+
+MISSING SPACES
+  MedicalCollege         → Medical College
+  HospitalAmravati       → Hospital Amravati
+  ShikshanSanstha        → Shikshan Sanstha
+
+WRONG CAPITALISATION (OCR all-caps artefacts)
+  SHR                    → Shri
+  SHRI                   → Shri
+  DR.                    → Dr.
+  SMT.                   → Smt.
+  Output should always be Title Case for proper nouns
+
+COMMON SPELLING CORRUPTIONS (apply when the intended word is obvious)
+  Shkshan / Shkhsan      → Shikshan
+  Hospita / Hospita1     → Hospital
+  Maharaj / Mahraj       → Maharaj
+  Sanstha / Sanshtha     → Sanstha
+  Ayurvedick             → Ayurvedic
+  Medica1                → Medical
+  Co11ege / Cottege      → College
+
+COMMON CHARACTER SUBSTITUTIONS
+  0 confused for O       → use O in names/words, 0 in numbers
+  1 confused for I or l  → use I/l in names/words
+  rn confused for m      → e.g. "Ayurvedic" not "Ayurvedic"
+  cl confused for d      → correct to the obvious word
+
+DO NOT GUESS. Only correct when the intended word is unambiguous from context.
+If two interpretations are equally plausible, preserve the OCR text as-is.
+
+---
+
+STEP 2 — SEPARATE MANAGING ORGANISATION FROM COLLEGE NAME
+
+Some certificates print a managing trust, educational society, or charitable trust
+ABOVE or BELOW the actual college name. These are two separate entities.
+
+Phrases that identify the MANAGING ORGANISATION (not the college):
+  "Managed by"
+  "Operated by"
+  "Sanchalit"
+  "Under the aegis of"
+  "Educational Society"
+  "Charitable Trust"
+  "Trust"
+  "Late Shri ..."
+  "Foundation"
+
+The MANAGING ORGANISATION must NEVER be included in college_name.
+
+Examples:
+
+  OCR text:
+    Narsingh K. Dube Charitable Trust
+    Nallasopara Ayurvedic Medical College
+
+  college_name = "Nallasopara Ayurvedic Medical College"   ← correct
+  college_name = "Narsingh K. Dube Charitable Trust Nallasopara Ayurvedic Medical College"  ← WRONG
+
+  OCR text:
+    Chhatrapati Shahu Maharaj Shikshan Sanstha
+    Government Medical College
+
+  college_name = "Government Medical College"   ← correct
+
+  OCR text:
+    Late Shri Educational Society's
+    Gondia Homoeopathic Medical College & Hospital
+
+  college_name = "Gondia Homoeopathic Medical College & Hospital"  ← correct
+
+The college_name must contain ONLY the degree-granting institution name.
+
+---
+
+FIELD DEFINITIONS
 
 FIELD 1 — college_name
 
-This should contain the official institution name followed ONLY by the locality or city
-if it forms part of the institution's commonly used identity.
+The official name of the degree-granting institution.
+Include only the locality or city if it is genuinely part of the institution's name.
 
 Good examples:
   "Takhatmal Shrivallabh Homoeopathic Medical College & Hospital, Rajapeth, Amravati"
@@ -57,15 +144,15 @@ Good examples:
 
 Rules for college_name:
   - Do NOT include PIN codes.
-  - Do NOT include district names unless they are part of the institution's official name.
+  - Do NOT include district names unless part of the institution's official name.
   - Do NOT include state names.
   - Do NOT include building names.
-  - Do NOT include campus-only addresses unless commonly used to identify the institution.
+  - Do NOT include managing trust / educational society names.
   - If the college name is genuinely missing, use null.
 
 FIELD 2 — college_address
 
-This should contain the COMPLETE postal address exactly as it appears in the document.
+The COMPLETE postal address exactly as it appears in the document (after OCR correction).
 
 Include everything available:
   Campus name, road, area, PIN code, district, state.
@@ -78,26 +165,14 @@ Rules for college_address:
   - Preserve punctuation wherever possible.
   - If the address is genuinely missing, use null.
 
+---
 
-
---- OCR CORRECTION RULES ---
-
-Never invent missing information.
-
-However, you SHOULD correct obvious OCR mistakes, including:
-  - missing spaces
-  - missing commas
-  - incorrect capitalisation
-  - obvious spelling mistakes
-when the intended text is clear from context.
-
-Do NOT guess if multiple interpretations are equally plausible.
-
---- OUTPUT RULES ---
+OUTPUT RULES
 
 - Never include markdown.
-- Never explain.
+- Never explain your reasoning.
 - Output JSON only.
+- Do not add any fields beyond the schema above.
 """
 
 
@@ -115,7 +190,20 @@ def is_satisfactory(result):
 
 
 def extract_information(ocr_text):
+    """
+    Send OCR text to the LLM for correction + structured extraction.
 
+    Parameters
+    ----------
+    ocr_text : str
+        Raw OCR text (the 'text' field from ocr_engine.ocr_image()).
+
+    Returns
+    -------
+    dict
+        Parsed JSON from the LLM.  On parse failure, returns
+        {"relevant": False, "parse_error": True, "raw_response": "..."}.
+    """
     response = ollama.chat(
         model=MODEL,
         messages=[
@@ -132,6 +220,7 @@ def extract_information(ocr_text):
 
     content = response["message"]["content"].strip()
 
+    # Strip any markdown code fences the model may accidentally add
     json_match = re.search(r'\{.*?\}', content, re.DOTALL)
 
     if json_match:

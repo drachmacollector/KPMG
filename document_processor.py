@@ -2,13 +2,17 @@ import os
 import hashlib
 import fitz  # PyMuPDF
 import cv2
-from PIL import Image
+from PIL import Image, ImageOps
+
+# Tesseract OSD for 90°/270° rotation detection
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # ---------------------------------------------------------
 # SHA256
 # ---------------------------------------------------------
 def calculate_sha256(filepath):
-    
+
     # Returns SHA256 hash of a file.
     # Used to detect duplicate uploads
 
@@ -28,25 +32,102 @@ def calculate_sha256(filepath):
 # ---------------------------------------------------------
 # IMAGE ORIENTATION
 # ---------------------------------------------------------
+def _apply_exif_rotation(image_path):
+    """
+    Apply EXIF orientation tag to correct mobile photos taken sideways.
+    Overwrites the file in-place.  Returns True if a rotation was applied.
+    """
+    try:
+        img = Image.open(image_path)
+        # ImageOps.exif_transpose reads the EXIF Orientation tag and
+        # physically rotates/flips the pixel data, then strips the tag.
+        corrected = ImageOps.exif_transpose(img)
+        if corrected is not img:           # only overwrite if something changed
+            corrected.save(image_path)
+            return True
+        return False
+    except Exception as e:
+        print(f"  [EXIF] Could not apply EXIF rotation on {image_path}: {e}")
+        return False
+
+
+def _detect_rotation_angle_osd(image_path):
+    """
+    Use Tesseract OSD (Orientation and Script Detection) to find the dominant
+    text orientation of the image.
+
+    Returns the degrees to rotate counter-clockwise so text is upright, or 0
+    if OSD fails / is uncertain.
+
+    Tesseract OSD 'Rotate' field is the angle the image must be rotated
+    counter-clockwise to make the text upright.
+    """
+    try:
+        osd = pytesseract.image_to_osd(
+            image_path,
+            output_type=pytesseract.Output.DICT,
+            config="--psm 0 -c min_characters_to_try=5"
+        )
+        angle = osd.get("rotate", 0)          # degrees CCW to correct
+        orientation_conf = osd.get("orientation_conf", 0.0)
+
+        print(f"  [OSD] angle={angle}°  orientation_conf={orientation_conf:.2f}")
+
+        # Only trust OSD when it has reasonable confidence
+        if orientation_conf < 2.0:
+            print(f"  [OSD] Low confidence ({orientation_conf:.2f}), skipping rotation.")
+            return 0
+
+        return int(angle)
+    except Exception as e:
+        print(f"  [OSD] OSD failed on {image_path}: {e}")
+        return 0
+
+
 def normalize_orientation(image_path):
+    """
+    Correct page orientation using a two-stage approach:
+
+    Stage 1 — EXIF rotation  (handles mobile photos tagged sideways)
+    Stage 2 — Tesseract OSD  (handles 90° / 270° rotations not in EXIF)
+
+    The corrected image is saved back to image_path in-place so that
+    PaddleOCR always receives an upright page.
+    """
+
+    # --- Stage 1: EXIF ---
+    exif_changed = _apply_exif_rotation(image_path)
+    if exif_changed:
+        print(f"  [EXIF] Applied EXIF rotation to {os.path.basename(image_path)}")
+
+    # --- Stage 2: Tesseract OSD ---
+    angle = _detect_rotation_angle_osd(image_path)
+
+    if angle == 0:
+        return  # already upright
+
+    # Map OSD CCW angle to OpenCV rotation constant
+    # OSD "rotate" = degrees the image must be rotated CCW to correct
+    # cv2.rotate uses CW conventions, so we invert:
+    cv_rotation_map = {
+        90:  cv2.ROTATE_90_COUNTERCLOCKWISE,   # OSD says rotate 90 CCW  → image is 90 CW rotated
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_CLOCKWISE,          # OSD says rotate 270 CCW → image is 90 CCW rotated
+    }
+
+    cv_code = cv_rotation_map.get(angle)
+    if cv_code is None:
+        print(f"  [OSD] Unexpected angle {angle}°, skipping.")
+        return
 
     img = cv2.imread(image_path)
-
     if img is None:
         return
 
-    h, w = img.shape[:2]
+    rotated = cv2.rotate(img, cv_code)
+    cv2.imwrite(image_path, rotated)
+    print(f"  [OSD] Rotated {angle}° CCW → {os.path.basename(image_path)}")
 
-    if w > h:
-        img = cv2.rotate(
-            img,
-            cv2.ROTATE_90_CLOCKWISE
-        )
-
-        cv2.imwrite(
-            image_path,
-            img
-        )
 # ---------------------------------------------------------
 # PDF -> PNG
 # ---------------------------------------------------------
@@ -62,6 +143,8 @@ def pdf_to_images(pdf_path, output_folder, prefix):
 
         page = doc.load_page(page_num)
 
+        # PyMuPDF honours the /Rotate PDF entry when rendering,
+        # so pages are already upright after get_pixmap().
         pix = page.get_pixmap(
             dpi=300,
             alpha=False
@@ -74,17 +157,8 @@ def pdf_to_images(pdf_path, output_folder, prefix):
 
         pix.save(output_path)
 
-        # # Preprocess image (RGB, denoising) and normalize orientation
-        # img = cv2.imread(output_path)
-        # if img is not None:
-        #     # Ensure RGB
-        #     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        #     # Optional denoising
-        #     img = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
-        #     # Convert back to BGR for cv2.imwrite
-        #     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        #     cv2.imwrite(output_path, img)
-
+        # Apply orientation correction (EXIF + OSD) to handle any
+        # remaining rotation that PyMuPDF didn't fix.
         normalize_orientation(output_path)
 
         image_paths.append(output_path)
@@ -92,6 +166,7 @@ def pdf_to_images(pdf_path, output_folder, prefix):
     doc.close()
 
     return image_paths
+
 # ---------------------------------------------------------
 # IMAGE -> PNG
 # ---------------------------------------------------------
@@ -108,17 +183,10 @@ def image_to_png(image_path, output_folder, prefix):
 
     img.save(output_path)
 
-    # # Preprocess image (RGB, denoising)
-    # cv_img = cv2.imread(output_path)
-    # if cv_img is not None:
-    #     cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-    #     cv_img = cv2.fastNlMeansDenoisingColored(cv_img, None, 10, 10, 7, 21)
-    #     cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
-    #     cv2.imwrite(output_path, cv_img)
-
     normalize_orientation(output_path)
 
     return [output_path]
+
 # ---------------------------------------------------------
 # AUTO NORMALIZATION
 # ---------------------------------------------------------
