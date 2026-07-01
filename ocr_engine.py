@@ -21,7 +21,7 @@ cuda_available = paddle.device.is_compiled_with_cuda()
 print(f"CUDA Available: {cuda_available}")
 
 if cuda_available:
-    print("Compiled with CUDA: True")
+    print("Compiled with CUDA: True ✅")
     # Determine device and name
     current_device = paddle.device.get_device()
     print(f"Current Device: {current_device}")
@@ -30,7 +30,7 @@ if cuda_available:
         if 'gpu' in current_device:
             gpu_id = int(current_device.split(':')[1])
             gpu_name = paddle.device.cuda.get_device_name(gpu_id)
-            print(f"GPU Name: {gpu_name}")
+            print(f"GPU Name: {gpu_name} 🔥")
     except Exception:
         pass
 else:
@@ -38,8 +38,12 @@ else:
 
 # Initialize globally so we don't reload the model on every page.
 # Using standard parameters for orientation classification and high accuracy.
-ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=cuda_available)
-
+ocr = PaddleOCR(
+    use_angle_cls=True,
+    lang="en",
+    use_gpu=cuda_available,
+    show_log=False,   # <- important
+)
 print("PaddleOCR ready.")
 
 def ocr_image(image_path):

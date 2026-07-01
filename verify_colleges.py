@@ -4,6 +4,7 @@ import time
 import re
 import os
 import urllib.request
+from tqdm import tqdm
 from bs4 import BeautifulSoup
 from document_processor import normalize_document
 from document_processor import calculate_sha256
@@ -13,17 +14,17 @@ from extractor import extract_information, is_satisfactory
 
 excel_file = "Medical_Claim_Data_Part_1.xlsx"
 excel_info = pd.ExcelFile(excel_file)
-print(f"\n Sheets found in your Excel file: {excel_info.sheet_names}")
+print(f"\n 📃 Sheets found in your Excel file: {excel_info.sheet_names}")
 
 target_sheet_name = "Medical Data Verification-Par1"
 
-print(f"Reading data from sheet: '{target_sheet_name}'...")
+print(f"📖 Reading data from sheet: '{target_sheet_name}'...")
 df = pd.read_excel(excel_file, sheet_name=target_sheet_name)
 
 df.columns = df.columns.str.strip()
 
 # Print out exactly what Pandas thinks your columns are
-print("\n Columns Pandas actually sees:")
+print("\n🔍 Columns Pandas actually sees:")
 print(df.columns.tolist())
 print("-" * 50 + "\n")
 # ----------------------
@@ -59,7 +60,13 @@ def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, pr
     """Download `doc_subset` keys from `documents`, normalize, return page list."""
     new_pages = []
 
-    for doc_type in doc_subset:
+    for doc_type in tqdm(
+        doc_subset,
+        desc="Downloading",
+        unit="doc",
+        leave=False,
+        colour="cyan"
+        ):
         url = documents.get(doc_type)
         if not url:
             print(f"  [{doc_type}] not found in documents dict, skipping.")
@@ -165,19 +172,19 @@ with sync_playwright() as p:
 
     # --- THE HUMAN HANDOFF ---
     print("\n" + "="*50)
-    print("AI PAUSED FOR HUMAN SETUP")
-    print("1. Maximize the window now if you want to.")
+    print("⏸️ AI PAUSED FOR HUMAN SETUP")
+    print("1. Preferably don't maximize or resize the window.")
     print("2. Log in manually.")
     print("3. Click on the 'Claims' section.")
     print("4. Drag the 'Acknowledgement Number' column into view.")
     print("5. Click the 3 bars on the column, click the funnel, and leave the text box open.")
     print("="*50 + "\n")
 
-    input("Press ENTER here in the terminal when you are ready to start the loop...")
+    input("👉 Press ENTER here in the terminal when you are ready to start the loop...")
     print("Starting automated extraction...")
 
     # Process up to row index 3 (ack_no 7791074215 is at index 2, so head(4) includes it)
-    for index, row in df.head(4).iterrows():
+    for index, row in df.head(10).iterrows():
         ack_no = str(row['acknowledgement_no']).strip()
 
         claim_folder = os.path.join("downloads", ack_no)
@@ -192,7 +199,7 @@ with sync_playwright() as p:
             continue
 
         print(f"\n{'='*60}")
-        print(f"Processing Row {index + 1}: {ack_no}")
+        print(f"🔃 Processing Row {index + 1}: {ack_no}")
         print(f"{'='*60}")
 
         try:
@@ -210,7 +217,7 @@ with sync_playwright() as p:
 
             # 2. Click Apply Filter
             page.locator('button').filter(has_text="Apply").first.click()
-            print("Waiting for grid to filter...")
+            print("Filtering through claims...")
             time.sleep(3)
 
         # --- NEW TAB HANDLING ---
@@ -220,7 +227,7 @@ with sync_playwright() as p:
             new_page = new_page_info.value
 
             # Wait for page to finish loading
-            print("Claim form opened.")
+            print("Claim form opened ")
             new_page.wait_for_selector("label", timeout=20000)
             time.sleep(1)
 
@@ -265,7 +272,7 @@ with sync_playwright() as p:
                 ):
                     documents["self_declaration"] = a["href"]
 
-            print(f"Documents found: {list(documents.keys())}")
+            print(f"📜 Documents found: {list(documents.keys())}")
 
             pages_folder = os.path.join(claim_folder, "pages")
             os.makedirs(pages_folder, exist_ok=True)
@@ -276,7 +283,7 @@ with sync_playwright() as p:
             # ---------------------------------------------------------------
             # PHASE 1 — Fast path: Bonafide + College ID only
             # ---------------------------------------------------------------
-            print("\n[Phase 1] Downloading priority documents (bonafide + college_id)...")
+            print("\n[Phase 1] 🔄️ Downloading priority documents (bonafide + college_id)...")
             phase1_pages = download_and_normalize(
                 PRIORITY_DOCS, documents, claim_folder, pages_folder, processed_hashes
             )
@@ -284,7 +291,7 @@ with sync_playwright() as p:
             best_result = None
 
             if phase1_pages:
-                print(f"\n[Phase 1] Running OCR + LLM on {len(phase1_pages)} page(s)...")
+                print(f"\n[Phase 1]⏳ Running OCR + LLM on {len(phase1_pages)} page(s)...")
                 best_result = ocr_and_extract(phase1_pages)
 
             if is_satisfactory(best_result):
@@ -334,7 +341,7 @@ with sync_playwright() as p:
                 index=False
             )
 
-            print(f"\nSaved progress after {ack_no}")
+            print(f"\nSaved progress after {ack_no} 🗃️")
 
             # Close the claim form tab
             new_page.close()

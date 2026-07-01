@@ -31,7 +31,6 @@ If it IS relevant, return ONLY valid JSON in this format:
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 0.95
 }
 
 or
@@ -43,7 +42,6 @@ or
   "academic_year": "...",
   "college_name": "...",
   "college_address": "...",
-  "confidence": 0.95
 }
 
 --- FIELD DEFINITIONS ---
@@ -80,14 +78,7 @@ Rules for college_address:
   - Preserve punctuation wherever possible.
   - If the address is genuinely missing, use null.
 
---- CONFIDENCE FIELD ---
 
-confidence:
-  Return a decimal number between 0 and 1 representing your confidence in the extraction.
-  Examples: 0.97, 0.81, 0.42
-  NEVER return null.
-  NEVER omit this field.
-  NEVER leave it blank.
 
 --- OCR CORRECTION RULES ---
 
