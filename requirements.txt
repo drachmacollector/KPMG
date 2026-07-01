@@ -7,7 +7,7 @@ Pillow
 ollama
 pytesseract
 tqdm
-paddlepaddle
+# paddlepaddle
 paddleocr
 google-generativeai
 google-search-results
