@@ -76,6 +76,8 @@ COMMON SPELLING CORRUPTIONS (apply when the intended word is obvious)
   Ayurvedick             → Ayurvedic
   Medica1                → Medical
   Co11ege / Cottege      → College
+  HOMOEOPATHIC           → HOMEOPATHIC
+  ARALBIHARI             → ATALBIHARI
 
 COMMON CHARACTER SUBSTITUTIONS
   0 confused for O       → use O in names/words, 0 in numbers

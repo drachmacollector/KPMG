@@ -1,6 +1,6 @@
 import os
 import hashlib
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 import cv2
 from PIL import Image, ImageOps
 

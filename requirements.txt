@@ -1,9 +1,11 @@
 pandas
 playwright
 beautifulsoup4
-pymupdf
+PyMuPDF
 opencv-python
 Pillow
-easyocr
 ollama
 pytesseract
+tqdm
+paddlepaddle
+paddleocr

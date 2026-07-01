@@ -16,8 +16,8 @@ from extractor import extract_information, is_satisfactory
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
-excel_file = "Medical_Claim_Data_Part_1.xlsx"
-target_sheet_name = "Medical Data Verification-Par1"
+excel_file = "26673- Master Merged Data Final_01.03.2026.xlsx"
+target_sheet_name = "Test Data"
 
 # Rows with accuracy below this threshold are flagged for manual review.
 # Adjust between 0 and 100 as needed.
@@ -295,8 +295,27 @@ with sync_playwright() as p:
     input("👉 Press ENTER here in the terminal when you are ready to start the loop...")
     print("Starting automated extraction...")
 
-    # Process up to row index 3 (ack_no 7791074215 is at index 2, so head(4) includes it)
-    for index, row in df.head(10).iterrows():
+#     # start = 10
+# end = 20  # exclusive
+
+# for index, row in df.iloc[start:end].iterrows():
+#     print(index, row) up to row index 3 (ack_no 7791074215 is at index 2, so head(4) includes it)
+
+#
+#
+#start = 10
+
+# for index, row in df.iloc[start:].iterrows():
+#     print(index, row)
+#
+#
+#
+#
+#
+#
+#
+
+    for index, row in df.iterrows():
         ack_no = str(row['acknowledgement_no']).strip()
 
         claim_folder = os.path.join("downloads", ack_no)
@@ -447,7 +466,7 @@ with sync_playwright() as p:
                 write_result(df, index, best_result, all_ocr_metrics)
 
             df.to_excel(
-                "Medical_Claim_Data_Output.xlsx",
+                "Test_Data_Medical_Claim_Data_Output.xlsx",
                 sheet_name=target_sheet_name,
                 index=False
             )
@@ -462,10 +481,10 @@ with sync_playwright() as p:
             continue
 
 df.to_excel(
-    "Medical_Claim_Data_Output.xlsx",
+    "Test_Data_Medical_Claim_Data_Output.xlsx",
     sheet_name=target_sheet_name,
     index=False
 )
 
 print("\nDone.")
-print("Output saved to Medical_Claim_Data_Output.xlsx")
+print("Output saved to Test_Data_Medical_Claim_Data_Output.xlsx")
