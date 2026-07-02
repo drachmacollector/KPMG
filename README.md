@@ -1,4 +1,4 @@
-# MAHABOCW Medical Scholarship Verification Automation
+#MAHABOCW Medical Scholarship Verification Automation
 
 **Version:** 2.0 (Revised Architecture)
 **Project Type:** Intelligent Document Processing (IDP) + Browser Automation
