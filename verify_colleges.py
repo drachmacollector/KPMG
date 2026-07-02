@@ -67,6 +67,22 @@ def download_document(url, save_path):
         return False
 
 
+def save_with_retry(df, filename, sheet_name):
+    while True:
+        try:
+            df.to_excel(
+                filename,
+                sheet_name=sheet_name,
+                index=False
+            )
+            print("Progress saved.")
+            return
+        except PermissionError:
+            print("\n⚠️ Output Excel file is currently open.")
+            print("Please close it. Retrying in 5 seconds...")
+            time.sleep(5)
+
+
 os.makedirs("downloads", exist_ok=True)
 
 
@@ -74,9 +90,9 @@ os.makedirs("downloads", exist_ok=True)
 # ACCURACY SCORING
 # ---------------------------------------------------------------------------
 
-def compute_accuracy(ocr_metrics_list, llm_result):
+def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
     """
-    Compute a programmatic accuracy score (0–100) from objective signals.
+    Compute a programmatic accuracy score (0-100) from objective signals.
 
     Parameters
     ----------
@@ -86,52 +102,52 @@ def compute_accuracy(ocr_metrics_list, llm_result):
         (as returned by ocr_engine.ocr_image).
     llm_result : dict | None
         The best LLM extraction result for the claim.
+    resolved : dict | None
+        The dict returned by resolve_institution().  If provided and
+        resolution_failed is False, the verification bonus is granted.
 
     Returns
     -------
     int
-        Accuracy score 0–100.
+        Accuracy score 0-100.
 
     Scoring breakdown (100 points total):
-      OCR quality signals  (40 pts max)
-        avg_confidence × 25        → up to 25 pts  (scales 0→1)
-        high_conf_ratio × 10       → up to 10 pts  (% high-quality lines)
-        min_confidence >= 0.60     →      5 pts     (binary bonus)
-      Extraction completeness      (60 pts max)
-        student_name extracted     → 10 pts
-        college_name extracted     → 20 pts
-        college_address extracted  → 20 pts
-        academic_year extracted    →  5 pts
-        document_type identified   →  5 pts
+      OCR avg_confidence              (30 pts max)
+        avg_conf * 30                 -> 0-30 pts   (linear, capped)
+
+      Cache Hit / Web Verification    (40 pts max)
+        resolved and not failed       -> 40 pts     (binary)
+        no resolved or failed         ->  0 pts
+
+      Cross-Document Agreement        (30 pts max)
+        >= 2 docs all with lines > 0  -> 30 pts     (full bonus)
+        exactly 1 doc with lines > 0  -> 15 pts     (partial)
+        no readable docs              ->  0 pts
     """
-    # --- OCR quality ---
+    # --- Component 1: OCR confidence (30 pts) ---
     if ocr_metrics_list:
-        avg_conf     = sum(m["avg_confidence"]  for m in ocr_metrics_list) / len(ocr_metrics_list)
-        min_conf     = min(m["min_confidence"]  for m in ocr_metrics_list)
-        high_ratio   = sum(m["high_conf_ratio"] for m in ocr_metrics_list) / len(ocr_metrics_list)
+        avg_conf = sum(m["avg_confidence"] for m in ocr_metrics_list) / len(ocr_metrics_list)
     else:
-        avg_conf = min_conf = high_ratio = 0.0
+        avg_conf = 0.0
 
-    ocr_score  = round(avg_conf * 25)          # 0–25
-    ocr_score += round(high_ratio * 10)        # 0–10
-    ocr_score += 5 if min_conf >= 0.60 else 0  # 0–5
-    ocr_score  = min(ocr_score, 40)            # cap at 40
+    ocr_score = min(round(avg_conf * 30), 30)
 
-    # --- Extraction completeness ---
-    extraction_score = 0
-    if llm_result and llm_result.get("relevant"):
-        if (llm_result.get("student_name") or "").strip():
-            extraction_score += 10
-        if (llm_result.get("college_name") or "").strip():
-            extraction_score += 20
-        if (llm_result.get("college_address") or "").strip():
-            extraction_score += 20
-        if (llm_result.get("academic_year") or "").strip():
-            extraction_score += 5
-        if (llm_result.get("document_type") or "").strip():
-            extraction_score += 5
+    # --- Component 2: Cache hit / web verification success (40 pts) ---
+    if resolved is not None and not resolved.get("resolution_failed", True):
+        verification_score = 40
+    else:
+        verification_score = 0
 
-    total = min(ocr_score + extraction_score, 100)
+    # --- Component 3: Cross-document agreement (30 pts) ---
+    readable_docs = sum(1 for m in ocr_metrics_list if m.get("line_count", 0) > 0)
+    if readable_docs >= 2:
+        cross_doc_score = 30
+    elif readable_docs == 1:
+        cross_doc_score = 15
+    else:
+        cross_doc_score = 0
+
+    total = min(ocr_score + verification_score + cross_doc_score, 100)
     return total
 
 
@@ -245,9 +261,7 @@ def ocr_and_extract(page_paths):
 
 def write_result(df, index, best_result, ocr_metrics):
     """Write extraction result and accuracy score into the dataframe row."""
-    accuracy = compute_accuracy(ocr_metrics, best_result)
-
-    df.loc[index, "accuracy"] = f"{accuracy}%"
+    resolved = None
 
     if best_result and best_result.get("relevant"):
         college_name    = (best_result.get("college_name")    or "").strip()
@@ -267,6 +281,9 @@ def write_result(df, index, best_result, ocr_metrics):
         df.loc[index, "corrected_college_name"]    = resolved["verified_college_name"].upper()
         df.loc[index, "corrected_college_address"] = resolved["verified_college_address"].upper()
         df.loc[index, "online_verification_status"] = "FAILED" if resolved["resolution_failed"] else ""
+
+    accuracy = compute_accuracy(ocr_metrics, best_result, resolved)
+    df.loc[index, "accuracy"] = f"{accuracy}%"
 
     # Flag for manual review when accuracy is below the threshold
     # OR when no usable result was obtained at all.
@@ -311,27 +328,8 @@ with sync_playwright() as p:
     input("👉 Press ENTER here in the terminal when you are ready to start the loop...")
     print("Starting automated extraction...")
 
-#     # start = 10
-# end = 20  # exclusive
-
-# for index, row in df.iloc[start:end].iterrows():
-#     print(index, row) up to row index 3 (ack_no 7791074215 is at index 2, so head(4) includes it)
-
-#
-#
-#start = 10
-
-# for index, row in df.iloc[start:].iterrows():
-#     print(index, row)
-#
-#
-#
-#
-#
-#
-#
-
-    for index, row in df.head(5).iterrows():
+    # for index, row in df.head(5).iterrows():
+    for index, row in df.iloc[14:23].iterrows():
         ack_no = str(row['acknowledgement_no']).strip()
 
         claim_folder = os.path.join("downloads", ack_no)
@@ -481,10 +479,10 @@ with sync_playwright() as p:
 
                 write_result(df, index, best_result, all_ocr_metrics)
 
-            df.to_excel(
+            save_with_retry(
+                df,
                 "Test_Data_Medical_Claim_Data_Output.xlsx",
-                sheet_name=target_sheet_name,
-                index=False
+                target_sheet_name
             )
 
             print(f"\nSaved progress after {ack_no} 🗃️")
@@ -496,10 +494,10 @@ with sync_playwright() as p:
             print(f"Error processing {ack_no}: {e}")
             continue
 
-df.to_excel(
+save_with_retry(
+    df,
     "Test_Data_Medical_Claim_Data_Output.xlsx",
-    sheet_name=target_sheet_name,
-    index=False
+    target_sheet_name
 )
 
 print("\nDone.")

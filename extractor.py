@@ -217,7 +217,8 @@ def extract_information(ocr_text):
                 "role": "user",
                 "content": ocr_text
             }
-        ]
+        ],
+        options={"temperature": 0.0},
     )
 
     content = response["message"]["content"].strip()

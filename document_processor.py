@@ -1,12 +1,9 @@
 import os
 import hashlib
+import tempfile
 import pymupdf as fitz  # PyMuPDF
 import cv2
 from PIL import Image, ImageOps
-
-# Tesseract OSD for 90°/270° rotation detection
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # ---------------------------------------------------------
 # SHA256
@@ -51,45 +48,71 @@ def _apply_exif_rotation(image_path):
         return False
 
 
-def _detect_rotation_angle_osd(image_path):
+# cv2 rotation codes for 90-degree increments (clockwise angles)
+_CV_ROTATE = {
+    0:   None,                          # no rotation
+    90:  cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
+
+def _find_best_rotation(image_path: str) -> int:
     """
-    Use Tesseract OSD (Orientation and Script Detection) to find the dominant
-    text orientation of the image.
+    Determine the orientation of the image by running PaddleOCR (GPU) at
+    four candidate angles (0, 90, 180, 270 degrees clockwise) and selecting
+    the angle that yields the highest avg_confidence.  Line count is used
+    as a tiebreaker.
 
-    Returns the degrees to rotate counter-clockwise so text is upright, or 0
-    if OSD fails / is uncertain.
-
-    Tesseract OSD 'Rotate' field is the angle the image must be rotated
-    counter-clockwise to make the text upright.
+    Returns the clockwise rotation angle (int) to apply so that text is upright.
+    Returns 0 if no rotation is needed or if OCR cannot decide.
     """
-    try:
-        osd = pytesseract.image_to_osd(
-            image_path,
-            output_type=pytesseract.Output.DICT,
-            config="--psm 0 -c min_characters_to_try=5"
-        )
-        angle = osd.get("rotate", 0)          # degrees CCW to correct
-        orientation_conf = osd.get("orientation_conf", 0.0)
+    # Lazy import to avoid a circular dependency at module load time
+    # (ocr_engine imports nothing from document_processor).
+    from ocr_engine import ocr_image
 
-        print(f"  [OSD] angle={angle}°  orientation_conf={orientation_conf:.2f}")
-
-        # Only trust OSD when it has reasonable confidence
-        if orientation_conf < 2.0:
-            print(f"  [OSD] Low confidence ({orientation_conf:.2f}), skipping rotation.")
-            return 0
-
-        return int(angle)
-    except Exception as e:
-        print(f"  [OSD] OSD failed on {image_path}: {e}")
+    img = cv2.imread(image_path)
+    if img is None:
         return 0
+
+    best_angle      = 0
+    best_avg_conf   = -1.0
+    best_line_count = 0
+
+    tmp_dir = tempfile.gettempdir()
+    tmp_path = os.path.join(tmp_dir, "_rotation_probe.png")
+
+    for angle, cv_code in _CV_ROTATE.items():
+        rotated = cv2.rotate(img, cv_code) if cv_code is not None else img
+        cv2.imwrite(tmp_path, rotated)
+
+        metrics = ocr_image(tmp_path)
+        avg_conf   = metrics["avg_confidence"]
+        line_count = metrics["line_count"]
+
+        print(f"  [Rotation] {angle:3d}° → avg_conf={avg_conf:.4f}  lines={line_count}")
+
+        if (avg_conf > best_avg_conf or
+                (avg_conf == best_avg_conf and line_count > best_line_count)):
+            best_avg_conf   = avg_conf
+            best_line_count = line_count
+            best_angle      = angle
+
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
+
+    return best_angle
 
 
 def normalize_orientation(image_path):
     """
     Correct page orientation using a two-stage approach:
 
-    Stage 1 — EXIF rotation  (handles mobile photos tagged sideways)
-    Stage 2 — Tesseract OSD  (handles 90° / 270° rotations not in EXIF)
+    Stage 1 — EXIF rotation     (handles mobile photos tagged sideways)
+    Stage 2 — PaddleOCR sweep   (4-angle confidence probe on GPU, replaces
+                                  Tesseract OSD which rejected too many docs)
 
     The corrected image is saved back to image_path in-place so that
     PaddleOCR always receives an upright page.
@@ -100,33 +123,20 @@ def normalize_orientation(image_path):
     if exif_changed:
         print(f"  [EXIF] Applied EXIF rotation to {os.path.basename(image_path)}")
 
-    # --- Stage 2: Tesseract OSD ---
-    angle = _detect_rotation_angle_osd(image_path)
+    # --- Stage 2: PaddleOCR brute-force rotation sweep ---
+    angle = _find_best_rotation(image_path)
 
     if angle == 0:
-        return  # already upright
-
-    # Map OSD CCW angle to OpenCV rotation constant
-    # OSD "rotate" = degrees the image must be rotated CCW to correct
-    # cv2.rotate uses CW conventions, so we invert:
-    cv_rotation_map = {
-        90:  cv2.ROTATE_90_COUNTERCLOCKWISE,   # OSD says rotate 90 CCW  → image is 90 CW rotated
-        180: cv2.ROTATE_180,
-        270: cv2.ROTATE_90_CLOCKWISE,          # OSD says rotate 270 CCW → image is 90 CCW rotated
-    }
-
-    cv_code = cv_rotation_map.get(angle)
-    if cv_code is None:
-        print(f"  [OSD] Unexpected angle {angle}°, skipping.")
+        print(f"  [Rotation] Best angle is 0° — no rotation needed.")
         return
 
     img = cv2.imread(image_path)
     if img is None:
         return
 
-    rotated = cv2.rotate(img, cv_code)
+    rotated = cv2.rotate(img, _CV_ROTATE[angle])
     cv2.imwrite(image_path, rotated)
-    print(f"  [OSD] Rotated {angle}° CCW → {os.path.basename(image_path)}")
+    print(f"  [Rotation] Applied {angle}° CW rotation to {os.path.basename(image_path)}")
 
 # ---------------------------------------------------------
 # PDF -> PNG
