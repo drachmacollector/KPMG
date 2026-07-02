@@ -58,7 +58,8 @@ import os
 import re
 from abc import ABC, abstractmethod
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from serpapi import GoogleSearch
 
@@ -158,7 +159,7 @@ class GeminiClient(LLMClient):
       2. Change the one-line wiring in resolve_institution().
     """
 
-    MODEL_NAME = "gemini-1.5-flash"
+    MODEL_NAME = "gemini-2.5-flash-lite"
 
     _SYSTEM_PROMPT = """\
 You are an institution entity-resolution assistant.
@@ -185,11 +186,7 @@ Rules:
 """
 
     def __init__(self, api_key: str):
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(
-            model_name=self.MODEL_NAME,
-            system_instruction=self._SYSTEM_PROMPT,
-        )
+        self._client = genai.Client(api_key=api_key)
 
     def _build_user_message(
         self,
@@ -221,13 +218,29 @@ Rules:
             extracted_name, extracted_address, search_results
         )
 
-        response = self._model.generate_content(user_message)
-        raw_text = response.text.strip()
+        response = self._client.models.generate_content(
+            model=self.MODEL_NAME,
+            contents=user_message,
+            config=types.GenerateContentConfig(
+                system_instruction=self._SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "object",
+                    "properties": {
+                        "verified_college_name": {"type": "string"},
+                        "verified_college_address": {"type": "string"},
+                        "city": {"type": "string"},
+                    },
+                    "required": [
+                        "verified_college_name",
+                        "verified_college_address",
+                        "city",
+                    ],
+                }
+            ),
+        )
 
-        # Strip any accidental markdown code fences
-        json_match = re.search(r"\{.*?\}", raw_text, re.DOTALL)
-        if json_match:
-            raw_text = json_match.group(0)
+        raw_text = response.text.strip()
 
         return json.loads(raw_text)
 
