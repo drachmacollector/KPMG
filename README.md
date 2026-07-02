@@ -1,6 +1,5 @@
-#MAHABOCW Medical Scholarship Verification Automation
+# MAHABOCW Medical Scholarship Verification Automation
 
-**Version:** 2.0 (Revised Architecture)
 **Project Type:** Intelligent Document Processing (IDP) + Browser Automation
 **Language:** Python
 **Target Users:** Maharashtra Building & Other Construction Workers Welfare Board (MAHABOCW)
