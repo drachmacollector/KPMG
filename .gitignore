@@ -23,3 +23,7 @@ venv/
 .venv/
 gemini_models.py
 test_pipeline.py
+
+# Added by user
+requirements.txt
+institution_cache.json
