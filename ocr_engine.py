@@ -1,12 +1,17 @@
 import os
+
+# Force protobuf pure-Python implementation so that PaddlePaddle's older
+# protobuf requirement and google-genai's newer requirement don't collide
+# at the C++ extension layer.  Must be set before any protobuf import.
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 import site
 import glob
 
 # Ensure all NVIDIA bin directories (cuDNN, cuBLAS, etc.) are in PATH
 try:
-    site_packages = site.getsitepackages()
-    if site_packages:
-        nvidia_path = os.path.join(site_packages[0], 'nvidia')
+    for sp in site.getsitepackages():
+        nvidia_path = os.path.join(sp, 'nvidia')
         if os.path.exists(nvidia_path):
             for lib_dir in glob.glob(os.path.join(nvidia_path, '*', 'bin')):
                 os.environ['PATH'] = lib_dir + os.pathsep + os.environ.get('PATH', '')
@@ -24,22 +29,23 @@ cuda_available = paddle.device.is_compiled_with_cuda()
 print(f"CUDA Available: {cuda_available}")
 
 if cuda_available:
-    print("Compiled with CUDA: True ✅")
+    print("Compiled with CUDA: True")
     current_device = paddle.device.get_device()
     print(f"Current Device: {current_device}")
     try:
         if 'gpu' in current_device:
             gpu_id = int(current_device.split(':')[1])
             gpu_name = paddle.device.cuda.get_device_name(gpu_id)
-            print(f"GPU Name: {gpu_name} 🔥")
+            print(f"GPU Name: {gpu_name}")
     except Exception:
         pass
 else:
     print("Compiled with CUDA: False")
 
 # Initialize globally so we don't reload the model on every page.
-# use_angle_cls=True enables PaddleOCR's built-in 0°/180° classifier.
-# 90°/270° rotation is handled upstream in document_processor.py via Tesseract OSD.
+# use_angle_cls=True enables PaddleOCR's built-in 0°/180° text-line classifier.
+# 90°/270° rotation is handled upstream in document_processor.py via the
+# brute-force 4-angle confidence sweep (_find_best_rotation).
 ocr = PaddleOCR(
     use_angle_cls=True,
     lang="en",

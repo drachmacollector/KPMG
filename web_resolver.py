@@ -56,14 +56,41 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+import urllib.request
 from abc import ABC, abstractmethod
 
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from rapidfuzz import fuzz
 from serpapi import GoogleSearch
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# INSTITUTION CACHE  (local fuzzy-match layer to skip redundant API calls)
+# ---------------------------------------------------------------------------
+
+CACHE_PATH = "institution_cache.json"
+
+
+def _load_cache() -> dict:
+    """Load the institution cache from disk.  Returns {} on first run."""
+    try:
+        with open(CACHE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cache(cache: dict) -> None:
+    """Persist the institution cache to disk."""
+    try:
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        print(f"[Cache] Could not save cache: {exc}")
 
 # ---------------------------------------------------------------------------
 # SEARCH PROVIDER ABSTRACTION
@@ -167,22 +194,25 @@ You are an institution entity-resolution assistant.
 You will receive:
   1. An extracted college name (possibly noisy / misspelled).
   2. An extracted college address (possibly noisy or incomplete).
-  3. Up to 5 Google search results (title, snippet, url).
+  3. Up to 5 numbered Google search results, each with a title, snippet, and URL.
 
 Your job:
-  - Rank the search results and determine the most likely real institution.
-  - Infer the official institution name, official address, and city.
+  - Identify which search result most closely matches the extracted institution.
+  - You MUST select ONE of the provided search results. Do NOT invent names or
+    addresses that do not appear in the search results.
+  - Copy the exact title and snippet text from the winning result into the output.
+  - Extract the city name from the winning result's title or snippet.
 
 Rules:
   - Return ONLY strict JSON. No markdown. No explanation. No extra keys.
   - JSON schema:
       {
-        "verified_college_name": "<Official institution name>",
-        "verified_college_address": "<Full official address>",
+        "winning_title":   "<Exact title string from the best matching result>",
+        "winning_snippet": "<Exact snippet string from the best matching result>",
         "city": "<City only — not district, not state, not PIN code>"
       }
-  - If you cannot determine the institution with reasonable confidence,
-    return the extracted values as-is.
+  - If none of the results match with reasonable confidence, copy the extracted
+    name as winning_title and extracted address as winning_snippet.
 """
 
     def __init__(self, api_key: str):
@@ -208,6 +238,20 @@ Rules:
 
         return "\n".join(lines)
 
+    # Common search-result title suffixes that are noise, not institution names.
+    _TITLE_NOISE = re.compile(
+        r"\s*[\-\u2013|]\s*(wikipedia|official (site|website)|home page|about|"
+        r"admissions?|contact|facebook|justdial|sulekha|indiamart)\.?\s*$",
+        re.IGNORECASE,
+    )
+
+    GEMINI_MODELS = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    ]
+
     def resolve(
         self,
         extracted_name: str,
@@ -218,31 +262,99 @@ Rules:
             extracted_name, extracted_address, search_results
         )
 
-        response = self._client.models.generate_content(
-            model=self.MODEL_NAME,
-            contents=user_message,
-            config=types.GenerateContentConfig(
-                system_instruction=self._SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "object",
-                    "properties": {
-                        "verified_college_name": {"type": "string"},
-                        "verified_college_address": {"type": "string"},
-                        "city": {"type": "string"},
-                    },
-                    "required": [
-                        "verified_college_name",
-                        "verified_college_address",
-                        "city",
-                    ],
-                }
-            ),
-        )
+        last_exc: Exception | None = None
+        
+        # 1. Google Gemini SDK Fallback Sequence
+        for model_name in self.GEMINI_MODELS:
+            print(f"[Gemini] Attempting resolution with {model_name}...")
+            try:
+                response = self._client.models.generate_content(
+                    model=model_name,
+                    contents=user_message,
+                    config=types.GenerateContentConfig(
+                        system_instruction=self._SYSTEM_PROMPT,
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                        response_schema={
+                            "type": "object",
+                            "properties": {
+                                "winning_title":   {"type": "string"},
+                                "winning_snippet": {"type": "string"},
+                                "city":            {"type": "string"},
+                            },
+                            "required": [
+                                "winning_title",
+                                "winning_snippet",
+                                "city",
+                            ],
+                        }
+                    ),
+                )
+                raw_text = response.text.strip()
+                return self._parse_json_response(raw_text, extracted_name, extracted_address)
+            except Exception as exc:
+                last_exc = exc
+                err_str = str(exc).lower()
+                if "503" in err_str or "unavailable" in err_str or "429" in err_str:
+                    print(f"[Gemini] {model_name} hit transient/capacity error: {exc}. Trying next model...")
+                    continue
+                print(f"[Gemini] {model_name} failed: {exc}. Trying next model...")
+                continue
 
-        raw_text = response.text.strip()
+        # 2. OpenRouter Fallback
+        print("[Resolver] All Google models failed. Falling back to OpenRouter (openrouter/free)...")
+        try:
+            raw_text = self._call_openrouter(user_message)
+            return self._parse_json_response(raw_text, extracted_name, extracted_address)
+        except Exception as exc:
+            print(f"[Resolver] OpenRouter fallback also failed: {exc}")
+            raise last_exc or RuntimeError("All resolution models failed.")
 
-        return json.loads(raw_text)
+    def _parse_json_response(self, raw_text: str, extracted_name: str, extracted_address: str) -> dict:
+        gemini_data = json.loads(raw_text)
+        winning_title   = gemini_data.get("winning_title",   extracted_name)
+        winning_snippet = gemini_data.get("winning_snippet", extracted_address)
+        city            = gemini_data.get("city", "")
+
+        # Strip common search-result title noise (" - Wikipedia", " | Official Site")
+        clean_name = self._TITLE_NOISE.sub("", winning_title).strip()
+
+        return {
+            "verified_college_name":    clean_name,
+            "verified_college_address": winning_snippet,
+            "city":                     city,
+        }
+
+    def _call_openrouter(self, user_message: str) -> str:
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        if not openrouter_key:
+            raise ValueError("OPENROUTER_API_KEY not found in environment.")
+            
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {openrouter_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://mahabocw-pipeline.local",
+            "X-Title": "MAHABOCW IDP"
+        }
+        
+        payload = {
+            "model": "openrouter/free",
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": self._SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ]
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            content = result["choices"][0]["message"]["content"]
+            if content.startswith("```json"):
+                content = content.replace("```json\n", "").replace("```json", "").replace("\n```", "").replace("```", "")
+            return content.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -310,9 +422,35 @@ def resolve_institution(
         "resolution_failed":        True,
     }
 
+    # -----------------------------------------------------------------------
+    # Step 0 -- Fuzzy cache lookup (skip Google + Gemini for known institutions)
+    # -----------------------------------------------------------------------
+    norm_key = extracted_name.lower().strip()
+    cache = _load_cache()
+
+    best_cache_score = 0
+    best_cache_key   = None
+    for cached_key in cache:
+        score = fuzz.token_sort_ratio(norm_key, cached_key)
+        if score > best_cache_score:
+            best_cache_score = score
+            best_cache_key   = cached_key
+
+    if best_cache_score > 90 and best_cache_key is not None:
+        cached = cache[best_cache_key]
+        print(f"[Resolver] Cache HIT (score={best_cache_score}) -> {cached['official_name']}")
+        return {
+            "verified_college_name":    cached["official_name"],
+            "verified_college_address": cached["official_address"],
+            "city":                     "",
+            "resolution_failed":        False,
+        }
+
+    print(f"[Resolver] Cache MISS (best_score={best_cache_score}). Proceeding to web search.")
+
     try:
-        # Step 1 — Build and execute search query
-        query = f'"{extracted_name}" medical college Maharashtra'
+        # Step 1 -- Build and execute search query
+        query = f'"{extracted_name}" "{extracted_address}"'
         print(f"[Resolver] Searching Google...")
 
         search_results = search_provider.perform_search(query)
@@ -350,18 +488,27 @@ def resolve_institution(
         print("[Resolver] Online verification unavailable. Using extracted values.")
         return fallback
 
-    # Step 4 — Append city to the college name (Python-enforced, not Gemini)
+    # Step 4 -- Append city to the college name (Python-enforced, not Gemini)
     verified_name = llm_result["verified_college_name"].strip()
     city          = llm_result["city"].strip()
 
-    final_name = _append_city(verified_name, city)
+    final_name    = _append_city(verified_name, city)
+    final_address = llm_result["verified_college_address"].strip()
 
     result = {
         "verified_college_name":    final_name,
-        "verified_college_address": llm_result["verified_college_address"].strip(),
+        "verified_college_address": final_address,
         "city":                     city,
         "resolution_failed":        False,
     }
+
+    # Step 5 -- Persist to cache so future lookups skip Google + Gemini
+    cache[norm_key] = {
+        "official_name":    final_name,
+        "official_address": final_address,
+    }
+    _save_cache(cache)
+    print(f"[Cache] Saved: {norm_key!r}")
 
     print("[Resolver] Institution resolved.")
     print(f"Verified College: {final_name}")
