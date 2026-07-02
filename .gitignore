@@ -24,6 +24,7 @@ venv/
 .venv/
 gemini_models.py
 test_pipeline.py
+test_web_resolver_helpers.py
 
 # Added by user
 requirements.txt

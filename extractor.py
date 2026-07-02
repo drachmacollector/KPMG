@@ -166,6 +166,27 @@ Good examples:
 Rules for college_address:
   - Preserve punctuation wherever possible.
   - If the address is genuinely missing, use null.
+  - Trust names, educational societies, foundations, or charitable organisations
+    must NEVER populate the college_address field unless genuine postal address
+    information (road, area, PIN code, city) immediately follows them in the
+    source text.
+  - If the only text available after the college name is a trust or foundation
+    name (e.g. "Late Kakasaheb Mhaske Memorial Medical Foundation's"), return
+    college_address: null.
+
+Examples of what NOT to do:
+  OCR text:
+    Shri Vivekananda Education Society's
+    Nanded Medical College
+
+  college_address = "Shri Vivekananda Education Society's"  ← WRONG
+  college_address = null                                     ← CORRECT (no postal info)
+
+  OCR text:
+    Late Kakasaheb Mhaske Memorial Medical Foundation's
+    Latur Road, Nanded-431601
+
+  college_address = "Latur Road, Nanded-431601"             ← CORRECT (postal info follows)
 
 ---
 

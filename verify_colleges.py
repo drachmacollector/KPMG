@@ -98,13 +98,16 @@ def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
     ----------
     ocr_metrics_list : list[dict]
         One dict per processed page, each containing:
-          avg_confidence, min_confidence, high_conf_ratio, line_count
-        (as returned by ocr_engine.ocr_image).
+          avg_confidence, min_confidence, high_conf_ratio, line_count,
+          is_relevant (bool — True only if the LLM identified the page as
+          a Bonafide Certificate or Student Identity Card).
+        (as returned by ocr_and_extract).
     llm_result : dict | None
         The best LLM extraction result for the claim.
     resolved : dict | None
         The dict returned by resolve_institution().  If provided and
-        resolution_failed is False, the verification bonus is granted.
+        resolution_failed is False, the verification bonus is granted
+        as a graduated score based on match_confidence.
 
     Returns
     -------
@@ -115,14 +118,17 @@ def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
       OCR avg_confidence              (30 pts max)
         avg_conf * 30                 -> 0-30 pts   (linear, capped)
 
-      Cache Hit / Web Verification    (40 pts max)
-        resolved and not failed       -> 40 pts     (binary)
-        no resolved or failed         ->  0 pts
+      Web Verification confidence     (40 pts max)
+        round((match_confidence/100) * 40)  -> 0-40 pts  (graduated)
+        e.g. 100% match = 40 pts, 75% match = 30 pts, failed = 0 pts
+        Cache hits receive match_confidence=100 -> full 40 pts
 
       Cross-Document Agreement        (30 pts max)
-        >= 2 docs all with lines > 0  -> 30 pts     (full bonus)
-        exactly 1 doc with lines > 0  -> 15 pts     (partial)
-        no readable docs              ->  0 pts
+        >= 2 docs with is_relevant=True  -> 30 pts  (full bonus)
+        exactly 1 doc with is_relevant=True -> 15 pts (partial)
+        no relevant docs                 ->  0 pts
+        NOTE: Aadhaar, Ration Card, Self Declaration are readable but
+        NOT relevant — they do not count toward this score.
     """
     # --- Component 1: OCR confidence (30 pts) ---
     if ocr_metrics_list:
@@ -132,17 +138,24 @@ def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
 
     ocr_score = min(round(avg_conf * 30), 30)
 
-    # --- Component 2: Cache hit / web verification success (40 pts) ---
+    # --- Component 2: Graduated web verification score (40 pts) ---
     if resolved is not None and not resolved.get("resolution_failed", True):
-        verification_score = 40
+        match_confidence = resolved.get("match_confidence", 0)
+        verification_score = round((match_confidence / 100) * 40)
     else:
         verification_score = 0
 
     # --- Component 3: Cross-document agreement (30 pts) ---
-    readable_docs = sum(1 for m in ocr_metrics_list if m.get("line_count", 0) > 0)
-    if readable_docs >= 2:
+    # Only pages identified as Bonafide or Student ID by the LLM count.
+    # Irrelevant but readable docs (Aadhaar, Ration Card, Self Declaration)
+    # must NOT contribute to this score.
+    relevant_docs = sum(
+        1 for m in ocr_metrics_list
+        if m.get("is_relevant") and m.get("line_count", 0) > 0
+    )
+    if relevant_docs >= 2:
         cross_doc_score = 30
-    elif readable_docs == 1:
+    elif relevant_docs == 1:
         cross_doc_score = 15
     else:
         cross_doc_score = 0
@@ -204,7 +217,10 @@ def ocr_and_extract(page_paths):
     tuple(dict | None, list[dict])
         (best_result, all_ocr_metrics)
         best_result      — best LLM result (bonafide preferred over student_id)
-        all_ocr_metrics  — list of per-page OCR metric dicts for accuracy scoring
+        all_ocr_metrics  — list of per-page OCR metric dicts for accuracy scoring.
+                           Each dict includes 'is_relevant' (bool): True only
+                           when the LLM identified the page as a Bonafide
+                           Certificate or Student Identity Card.
     """
     bonafide_result = None
     student_id_result = None
@@ -215,13 +231,15 @@ def ocr_and_extract(page_paths):
 
         ocr_result = ocr_image(page)
 
-        # Collect metrics regardless of whether the page is relevant
-        all_ocr_metrics.append({
+        # Collect metrics for every page; is_relevant will be filled in below
+        page_metrics = {
             "avg_confidence":  ocr_result["avg_confidence"],
             "min_confidence":  ocr_result["min_confidence"],
             "high_conf_ratio": ocr_result["high_conf_ratio"],
             "line_count":      ocr_result["line_count"],
-        })
+            "is_relevant":     False,   # default; updated if LLM confirms relevance
+        }
+        all_ocr_metrics.append(page_metrics)
 
         ocr_text = ocr_result["text"]
 
@@ -243,6 +261,10 @@ def ocr_and_extract(page_paths):
             continue
 
         print(f"  {result}")
+
+        # Backfill is_relevant onto the metrics entry for this page
+        if result.get("relevant"):
+            page_metrics["is_relevant"] = True
 
         if not result.get("relevant"):
             continue
