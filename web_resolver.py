@@ -75,7 +75,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
-from serpapi import GoogleSearch
+# from serpapi import GoogleSearch
 
 load_dotenv()
 
@@ -352,61 +352,61 @@ def _confidence_label(score: int) -> str:
 # SEARCH PROVIDER ABSTRACTION
 # ---------------------------------------------------------------------------
 
-class SearchProvider(ABC):
-    """Abstract search interface. Implement this to swap search backends."""
-
-    @abstractmethod
-    def perform_search(self, query: str) -> list[dict]:
-        """
-        Execute a web search and return up to 5 organic results.
-
-        Each result dict must contain:
-            title   : str
-            snippet : str
-            url     : str
-        """
-        raise NotImplementedError
-
-
-class SerpApiProvider(SearchProvider):
-    """
-    Concrete search provider backed by SerpAPI (Google Search).
-
-    To replace with Brave / Bing / Tavily:
-      1. Create a new subclass of SearchProvider.
-      2. Change the one-line wiring in resolve_institution().
-    """
-
-    MAX_RESULTS = 5
-
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-
-    def perform_search(self, query: str) -> list[dict]:
-        params = {
-            "q": query,
-            "api_key": self._api_key,
-            "num": 10,          # request a few extra so filtering still gives 5
-            "hl": "en",
-            "gl": "in",         # India locale for better relevance
-        }
-
-        search = GoogleSearch(params)
-        raw = search.get_dict()
-
-        organic = raw.get("organic_results", [])
-
-        results = []
-        for item in organic:
-            results.append({
-                "title":   item.get("title", ""),
-                "snippet": item.get("snippet", ""),
-                "url":     item.get("link", ""),
-            })
-            if len(results) >= self.MAX_RESULTS:
-                break
-
-        return results
+# class SearchProvider(ABC):
+#     """Abstract search interface. Implement this to swap search backends."""
+# 
+#     @abstractmethod
+#     def perform_search(self, query: str) -> list[dict]:
+#         """
+#         Execute a web search and return up to 5 organic results.
+# 
+#         Each result dict must contain:
+#             title   : str
+#             snippet : str
+#             url     : str
+#         """
+#         raise NotImplementedError
+# 
+# 
+# class SerpApiProvider(SearchProvider):
+#     """
+#     Concrete search provider backed by SerpAPI (Google Search).
+# 
+#     To replace with Brave / Bing / Tavily:
+#       1. Create a new subclass of SearchProvider.
+#       2. Change the one-line wiring in resolve_institution().
+#     """
+# 
+#     MAX_RESULTS = 5
+# 
+#     def __init__(self, api_key: str):
+#         self._api_key = api_key
+# 
+#     def perform_search(self, query: str) -> list[dict]:
+#         params = {
+#             "q": query,
+#             "api_key": self._api_key,
+#             "num": 10,          # request a few extra so filtering still gives 5
+#             "hl": "en",
+#             "gl": "in",         # India locale for better relevance
+#         }
+# 
+#         search = GoogleSearch(params)
+#         raw = search.get_dict()
+# 
+#         organic = raw.get("organic_results", [])
+# 
+#         results = []
+#         for item in organic:
+#             results.append({
+#                 "title":   item.get("title", ""),
+#                 "snippet": item.get("snippet", ""),
+#                 "url":     item.get("link", ""),
+#             })
+#             if len(results) >= self.MAX_RESULTS:
+#                 break
+# 
+#         return results
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +421,6 @@ class LLMClient(ABC):
         self,
         extracted_name: str,
         extracted_address: str,
-        search_results: list[dict],
     ) -> dict:
         """
         Given the extracted college name, address, and top search results,
@@ -452,28 +451,16 @@ You are an institution entity-resolution assistant for Indian medical colleges.
 
 You will receive:
   1. An extracted college name (possibly noisy / misspelled).
-  2. An extracted college address (for context only — do NOT copy it into output).
-  3. Up to 5 numbered Google search results, each with a title, snippet, and URL.
+  2. An extracted college address (possibly noisy).
 
 Your job:
-  - Identify which search result most closely matches the extracted institution.
-  - You MUST select ONE of the provided search results. Do NOT invent names or
-    information that does not appear in the search results.
-  - Copy the exact title text from the winning result into the output.
-  - Extract the city name from the winning result's title or snippet.
-
-Critical rules:
-  - The address field in the output is NOT required.  Do NOT extract an address
-    from any Google snippet.  Snippets frequently contain ad copy, phone numbers,
-    and website descriptions that are not valid postal addresses.
-  - Return ONLY strict JSON. No markdown. No explanation. No extra keys.
+  - Find the official institution name and full, official postal address for this college in Maharashtra, India.
+  - Return ONLY strict JSON. No markdown codeblocks. No explanation. No extra keys.
   - JSON schema:
       {
-        "winning_title": "<Exact title string from the best matching result>",
-        "city": "<City only — not district, not state, not PIN code>"
+        "verified_college_name": "<Verified, official institution name>",
+        "verified_college_address": "<Verified, full postal address of the institution>"
       }
-  - If none of the results match with reasonable confidence, copy the extracted
-    name verbatim as winning_title and leave city as an empty string.
 """
 
     def __init__(self, api_key: str):
@@ -483,20 +470,12 @@ Critical rules:
         self,
         extracted_name: str,
         extracted_address: str,
-        search_results: list[dict],
     ) -> str:
         lines = [
             f"Extracted college name: {extracted_name}",
-            f"Extracted college address (context only): {extracted_address or '(not available)'}",
-            "",
-            "Search results:",
+            f"Extracted college address: {extracted_address or '(not available)'}",
+            ""
         ]
-        for i, r in enumerate(search_results, 1):
-            lines.append(f"  [{i}] Title:   {r['title']}")
-            lines.append(f"       Snippet: {r['snippet']}")
-            lines.append(f"       URL:     {r['url']}")
-            lines.append("")
-
         return "\n".join(lines)
 
     # Common search-result title suffixes that are noise, not institution names.
@@ -510,17 +489,16 @@ Critical rules:
         "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
+        "gemini-3-flash-preview",
     ]
 
     def resolve(
         self,
         extracted_name: str,
         extracted_address: str,
-        search_results: list[dict],
     ) -> dict:
         user_message = self._build_user_message(
-            extracted_name, extracted_address, search_results
+            extracted_name, extracted_address
         )
 
         last_exc: Exception | None = None
@@ -535,15 +513,7 @@ Critical rules:
                     config=types.GenerateContentConfig(
                         system_instruction=self._SYSTEM_PROMPT,
                         temperature=0.0,
-                        response_mime_type="application/json",
-                        response_schema={
-                            "type": "object",
-                            "properties": {
-                                "winning_title": {"type": "string"},
-                                "city":          {"type": "string"},
-                            },
-                            "required": ["winning_title", "city"],
-                        },
+                        tools=[{"google_search": {}}],
                     ),
                 )
                 raw_text = response.text.strip()
@@ -571,17 +541,15 @@ Critical rules:
 
     def _parse_json_response(self, raw_text: str, extracted_name: str) -> dict:
         gemini_data = json.loads(raw_text)
-        winning_title = gemini_data.get("winning_title", extracted_name)
-        city          = gemini_data.get("city", "")
+        verified_name = gemini_data.get("verified_college_name", extracted_name)
+        verified_address = gemini_data.get("verified_college_address", "")
 
         # Strip common search-result title noise (" - Wikipedia", " | Official Site")
-        clean_name = self._TITLE_NOISE.sub("", winning_title).strip()
+        clean_name = self._TITLE_NOISE.sub("", verified_name).strip()
 
         return {
             "verified_college_name": clean_name,
-            "city":                  city,
-            # verified_college_address is intentionally absent — resolve_institution()
-            # fills it from the OCR extraction via clean_address().
+            "verified_college_address": verified_address,
         }
 
     def _call_openrouter(self, user_message: str) -> str:
@@ -681,15 +649,15 @@ def resolve_institution(
         match_confidence         : int   — rapidfuzz token_sort_ratio (0-100)
     """
     # --- Wire in the concrete providers (single location for future swaps) ---
-    search_provider: SearchProvider = SerpApiProvider(
-        api_key=os.environ["SERPAPI_API_KEY"]
-    )
+    # search_provider: SearchProvider = SerpApiProvider(
+    #     api_key=os.environ["SERPAPI_API_KEY"]
+    # )
     llm_client: LLMClient = GeminiClient(
         api_key=os.environ["GEMINI_API_KEY"]
     )
     # -------------------------------------------------------------------------
 
-    # The OCR address is authoritative — clean it once here for all code paths.
+    # Fallback address in case Gemini fails
     cleaned_ocr_address = clean_address(extracted_address)
 
     fallback = {
@@ -728,36 +696,11 @@ def resolve_institution(
     print(f"[Resolver] Cache MISS (best_score={best_cache_score}). Proceeding to web search.")
 
     # -----------------------------------------------------------------------
-    # Step 1 — Build query list and execute with progressive relaxation
-    # -----------------------------------------------------------------------
-    queries = _build_queries(extracted_name, extracted_address)
-    search_results: list[dict] = []
-
-    try:
-        for attempt, query in enumerate(queries, 1):
-            print(f"[Resolver] Search attempt {attempt}/{len(queries)}: {query!r}")
-            results = search_provider.perform_search(query)
-            if results:
-                search_results = results
-                print(f"[Resolver] Retrieved {len(search_results)} result(s) on attempt {attempt}.")
-                break
-            print(f"[Resolver] No results for attempt {attempt}. Relaxing query...")
-
-        if not search_results:
-            print("[Resolver] All query tiers exhausted with zero results. Using extracted values.")
-            return fallback
-
-    except Exception as exc:
-        print(f"[Resolver] Search failed: {exc}")
-        print("[Resolver] Online verification unavailable. Using extracted values.")
-        return fallback
-
-    # -----------------------------------------------------------------------
-    # Step 2 — Ask the LLM to identify the institution from search results
+    # Step 1 & 2 — Ask the LLM to directly search and identify the institution
     # -----------------------------------------------------------------------
     try:
-        print("[Resolver] Sending candidates to Gemini...")
-        llm_result = llm_client.resolve(extracted_name, extracted_address, search_results)
+        print("[Resolver] Sending candidates to Gemini with Native Search Grounding...")
+        llm_result = llm_client.resolve(extracted_name, extracted_address)
 
     except json.JSONDecodeError as exc:
         print(f"[Resolver] Gemini returned malformed JSON: {exc}")
@@ -777,8 +720,9 @@ def resolve_institution(
     # -----------------------------------------------------------------------
     # Step 4 — Compute entity resolution confidence
     # -----------------------------------------------------------------------
-    verified_name = llm_result["verified_college_name"].strip()
-    city          = llm_result.get("city", "").strip()
+    verified_name = llm_result.get("verified_college_name", "").strip()
+    verified_address = llm_result.get("verified_college_address", "").strip()
+    city = ""  # We no longer extract city separately
 
     match_confidence = _compute_confidence(verified_name, extracted_name)
     label            = _confidence_label(match_confidence)
@@ -796,13 +740,14 @@ def resolve_institution(
     # -----------------------------------------------------------------------
     # Step 5 — Assemble final result
     # -----------------------------------------------------------------------
-    final_name    = _append_city(verified_name, city)
-    final_address = cleaned_ocr_address   # OCR address is authoritative
+    # Native search retrieves the full address, so we prefer it.
+    final_name    = verified_name
+    final_address = verified_address if verified_address else cleaned_ocr_address
 
     result = {
         "verified_college_name":    final_name,
         "verified_college_address": final_address,
-        "city":                     city,
+        "city":                     "",  # We don't strictly need city appended anymore if final_name is already accurate
         "resolution_failed":        False,
         "match_confidence":         match_confidence,
     }
