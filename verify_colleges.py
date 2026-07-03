@@ -335,6 +335,7 @@ def write_result(df, index, best_result, ocr_metrics):
         # returns the original values and sets resolution_failed=True.
         # ------------------------------------------------------------------
         try:
+            logger.info(f"\nOCR/Qwen Extracted Name: {college_name}")
             logger.info("\nVerifying College via LLM Search...")
             resolved = resolve_institution(
                 extracted_name=college_name,
@@ -368,9 +369,12 @@ def write_result(df, index, best_result, ocr_metrics):
 
     if resolved and not resolved.get("resolution_failed"):
         v_name = (resolved.get("verified_college_name") or "").upper()
+        v_addr = (resolved.get("verified_college_address") or "").upper()
         logger.info(f"\n[OK] College Verified")
-        logger.info(v_name + "\n")
-        logger.info(f"Accuracy: {accuracy}%")
+        logger.info(v_name)
+        if v_addr:
+            logger.info(v_addr)
+        logger.info(f"\nAccuracy: {accuracy}%")
         logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
     else:
         logger.info(f"\n[FAILED] Resolution Failed\n")
