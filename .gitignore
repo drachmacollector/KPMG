@@ -15,6 +15,7 @@
 /processed/
 /samples/
 /test/
+/testing/
 
 # Python
 __pycache__/
