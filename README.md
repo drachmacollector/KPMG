@@ -43,10 +43,6 @@ The pipeline runs in two document phases per claim: **Phase 1** (bonafide certif
 | `ocr_engine.py` | PaddleOCR initialization and `ocr_image()`. |
 | `extractor.py` | Ollama/Qwen-based document classification and college detail extraction. |
 | `web_resolver.py` | Institution resolution via cache, Gemini search grounding, and OpenRouter fallback. |
-| `requirements-lock.txt` | Frozen dependency snapshot. |
-| `MahaBOCW.png` | Portal reference screenshot. |
-
-Untracked runtime files (created locally, not in git): `requirements.txt`, `logger_config.py`, `.env`, `institution_cache.json`, `downloads/`, `logs/`, `testing/`.
 
 ## 4. Setup
 
@@ -58,6 +54,7 @@ playwright install chromium
 ```
 
 Install the GPU build of PaddlePaddle separately, since it depends on the CUDA wheel:
+This project was originally built using an NVIDIA RTX 4060.
 
 ```powershell
 pip install paddlepaddle-gpu==2.6.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
