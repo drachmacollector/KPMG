@@ -253,8 +253,12 @@ def extract_information(ocr_text):
         content = json_match.group(0)
 
     try:
-        return json.loads(content)
-    except Exception:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError("LLM response is not a JSON object")
+        return data
+    except Exception as e:
+        logger.error(f"[Extractor] JSON parsing failed: {e}")
         return {
             "relevant": False,
             "parse_error": True,

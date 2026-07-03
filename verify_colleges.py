@@ -4,6 +4,8 @@ import time
 import re
 import os
 import urllib.request
+import urllib.error
+import socket
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 from document_processor import normalize_document
@@ -28,7 +30,7 @@ ACCURACY_THRESHOLD = 80
 # ---------------------------------------------------------------------------
 
 logger.debug("[*] Initializing MAHABOCW Verification Engine...")
-with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour="green", leave=False) as pbar:
+with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour="green") as pbar:
     output_excel_file = "Test_Data_Medical_Claim_Data_Output.xlsx"
     if os.path.exists(output_excel_file):
         excel_info = pd.ExcelFile(output_excel_file)
@@ -51,32 +53,42 @@ with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour=
     logger.debug(df.columns.tolist())
     pbar.update(1)
 # ----------------------
+cols_to_init = [
+    'corrected_college_name',
+    'corrected_college_address',
+    'accuracy',
+    'manual_review',
+    'online_verification_status'
+]
 
-if 'corrected_college_name' not in df.columns:
-    df['corrected_college_name'] = ""
-
-if 'corrected_college_address' not in df.columns:
-    df['corrected_college_address'] = ""
-
-if 'accuracy' not in df.columns:
-    df['accuracy'] = ""
-
-if 'manual_review' not in df.columns:
-    df['manual_review'] = ""
-
-if 'online_verification_status' not in df.columns:
-    df['online_verification_status'] = ""
+for col in cols_to_init:
+    if col not in df.columns:
+        df[col] = ""
+    # Explicitly enforce string dtype to prevent float64 rejection on empty columns
+    df[col] = df[col].fillna("").astype(str)
 
 
 def download_document(url, save_path):
-    try:
-        urllib.request.urlretrieve(url, save_path)
-        logger.debug(f"Downloaded: {save_path}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Download failed: {e}")
-        return False
+    retries = 3
+    delays = [2, 4]  # Wait 2s, then 4s on failures.
+    
+    for attempt in range(retries):
+        try:
+            urllib.request.urlretrieve(url, save_path)
+            logger.debug(f"Downloaded: {save_path}")
+            return True
+        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
+            if attempt < len(delays):
+                wait_time = delays[attempt]
+                logger.debug(f"• Retry {attempt + 1}/{len(delays)} for {os.path.basename(save_path)} in {wait_time}s ({e})")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Download failed after retries: {e}")
+        except Exception as e:
+            logger.error(f"Download failed unexpectedly: {e}")
+            break
+            
+    return False
 
 
 def save_with_retry(df, filename, sheet_name):
@@ -322,15 +334,29 @@ def write_result(df, index, best_result, ocr_metrics):
         # verified official name and address.  On any failure the resolver
         # returns the original values and sets resolution_failed=True.
         # ------------------------------------------------------------------
-        logger.info("\nVerifying College...")
-        resolved = resolve_institution(
-            extracted_name=college_name,
-            extracted_address=college_address,
-        )
+        try:
+            logger.info("\nVerifying College...")
+            resolved = resolve_institution(
+                extracted_name=college_name,
+                extracted_address=college_address,
+            )
+        except Exception as e:
+            logger.error(f"Online verification completely failed: {e}")
+            resolved = {
+                "verified_college_name": college_name,
+                "verified_college_address": college_address,
+                "city": "",
+                "resolution_failed": True,
+                "match_confidence": 0,
+                "via_cache": False,
+            }
 
-        df.loc[index, "corrected_college_name"]    = resolved["verified_college_name"].upper()
-        df.loc[index, "corrected_college_address"] = resolved["verified_college_address"].upper()
-        df.loc[index, "online_verification_status"] = "FAILED" if resolved["resolution_failed"] else ""
+        verified_name = resolved.get("verified_college_name") or ""
+        verified_address = resolved.get("verified_college_address") or ""
+
+        df.loc[index, "corrected_college_name"]    = verified_name.upper()
+        df.loc[index, "corrected_college_address"] = verified_address.upper()
+        df.loc[index, "online_verification_status"] = "FAILED" if resolved.get("resolution_failed") else ""
 
     accuracy = compute_accuracy(ocr_metrics, best_result, resolved)
     df.loc[index, "accuracy"] = f"{accuracy}%"
@@ -341,8 +367,9 @@ def write_result(df, index, best_result, ocr_metrics):
     df.loc[index, "manual_review"] = "YES" if needs_review else ""
 
     if resolved and not resolved.get("resolution_failed"):
+        v_name = (resolved.get("verified_college_name") or "").upper()
         logger.info(f"\n✓ College Verified")
-        logger.info(resolved["verified_college_name"].upper() + "\n")
+        logger.info(v_name + "\n")
         logger.info(f"Accuracy: {accuracy}%")
         logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
     else:
@@ -366,12 +393,16 @@ FALLBACK_DOCS = [
 
 # 2. Start Browser Automation
 with sync_playwright() as p:
-    # no_viewport=True allows you to maximize the window safely without breaking the site!
+    # no_viewport=True allows you to maximize the window safely without breaking the site!  
     browser = p.chromium.launch(headless=False)
     context = browser.new_context(no_viewport=True)
     page = context.new_page()
 
-    page.goto("https://iwbms.mahabocw.in/sso")
+    page.goto(
+        "https://iwbms.mahabocw.in/sso",
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
 
     # --- THE HUMAN HANDOFF ---
     logger.info("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -494,16 +525,23 @@ with sync_playwright() as p:
                 # PHASE 1 — Fast path: Bonafide + College ID only
                 # ---------------------------------------------------------------
                 logger.debug("[Phase 1] Trying priority documents (Bonafide + College ID)...")
-                phase1_pages = download_and_normalize(
-                    PRIORITY_DOCS, documents, claim_folder, pages_folder, processed_hashes
-                )
+                try:
+                    phase1_pages = download_and_normalize(
+                        PRIORITY_DOCS, documents, claim_folder, pages_folder, processed_hashes
+                    )
+                except Exception as e:
+                    logger.error(f"Phase 1 document processing failed: {e}")
+                    phase1_pages = []
     
                 best_result = None
     
                 if phase1_pages:
                     logger.debug(f"[Phase 1] Found {len(phase1_pages)} page(s) to process.")
-                    best_result, phase1_metrics = ocr_and_extract(phase1_pages)
-                    all_ocr_metrics.extend(phase1_metrics)
+                    try:
+                        best_result, phase1_metrics = ocr_and_extract(phase1_pages)
+                        all_ocr_metrics.extend(phase1_metrics)
+                    except Exception as e:
+                        logger.error(f"Phase 1 OCR/Extraction failed: {e}")
     
                 if is_satisfactory(best_result):
                     logger.debug("[Phase 1] SUCCESS — satisfactory result obtained.")
@@ -517,14 +555,22 @@ with sync_playwright() as p:
                     logger.debug("[Phase 1] Result unsatisfactory. Triggering fallback...")
                     logger.debug("[Phase 2] Downloading fallback documents...")
     
-                    phase2_new_pages = download_and_normalize(
-                        FALLBACK_DOCS, documents, claim_folder, pages_folder, processed_hashes
-                    )
+                    try:
+                        phase2_new_pages = download_and_normalize(
+                            FALLBACK_DOCS, documents, claim_folder, pages_folder, processed_hashes
+                        )
+                    except Exception as e:
+                        logger.error(f"Phase 2 document processing failed: {e}")
+                        phase2_new_pages = []
     
                     if phase2_new_pages:
                         logger.debug(f"[Phase 2] Found {len(phase2_new_pages)} new page(s) to process.")
-                        phase2_result, phase2_metrics = ocr_and_extract(phase2_new_pages)
-                        all_ocr_metrics.extend(phase2_metrics)
+                        try:
+                            phase2_result, phase2_metrics = ocr_and_extract(phase2_new_pages)
+                            all_ocr_metrics.extend(phase2_metrics)
+                        except Exception as e:
+                            logger.error(f"Phase 2 OCR/Extraction failed: {e}")
+                            phase2_result = None
     
                         # Prefer Phase 2 result if satisfactory; else keep Phase 1 result
                         if is_satisfactory(phase2_result):

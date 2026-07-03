@@ -54,13 +54,17 @@ logger.debug(f"[*] GPU: {gpu_info}")
 # use_angle_cls=True enables PaddleOCR's built-in 0°/180° text-line classifier.
 # 90°/270° rotation is handled upstream in document_processor.py via the
 # brute-force 4-angle confidence sweep (_find_best_rotation).
-with tqdm(total=1, desc="Loading PaddleOCR", bar_format="{l_bar}{bar:20}|", colour="#FF69B4", leave=False) as pbar:
-    ocr = PaddleOCR(
-        use_angle_cls=True,
-        lang="en",
-        use_gpu=cuda_available,
-        show_log=False,
-    )
+import contextlib
+import io
+
+with tqdm(total=1, desc="Loading PaddleOCR", bar_format="{l_bar}{bar:20}|", colour="#FF69B4") as pbar:
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        ocr = PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+            use_gpu=cuda_available,
+            show_log=False,
+        )
     pbar.update(1)
 
 logger.debug("[*] PaddleOCR Ready")

@@ -548,9 +548,17 @@ Your job:
             raise last_exc or RuntimeError("All resolution models failed.")
 
     def _parse_json_response(self, raw_text: str, extracted_name: str) -> dict:
-        gemini_data = json.loads(raw_text)
-        verified_name = gemini_data.get("verified_college_name", extracted_name)
-        verified_address = gemini_data.get("verified_college_address", "")
+        try:
+            gemini_data = json.loads(raw_text)
+            if not isinstance(gemini_data, dict):
+                logger.error("[Resolver] LLM returned non-dict JSON")
+                gemini_data = {}
+        except json.JSONDecodeError as e:
+            logger.error(f"[Resolver] LLM JSON parsing failed: {e}")
+            gemini_data = {}
+
+        verified_name = str(gemini_data.get("verified_college_name") or extracted_name)
+        verified_address = str(gemini_data.get("verified_college_address") or "")
 
         # Strip common search-result title noise (" - Wikipedia", " | Official Site")
         clean_name = self._TITLE_NOISE.sub("", verified_name).strip()
