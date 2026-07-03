@@ -1,6 +1,7 @@
 import json
 import ollama
 import re
+from logger_config import logger
 
 MODEL = "qwen2.5:7b-instruct"
 
@@ -243,6 +244,7 @@ def extract_information(ocr_text):
     )
 
     content = response["message"]["content"].strip()
+    logger.debug(f"[Extractor] Raw LLM response: {content}")
 
     # Strip any markdown code fences the model may accidentally add
     json_match = re.search(r'\{.*?\}', content, re.DOTALL)

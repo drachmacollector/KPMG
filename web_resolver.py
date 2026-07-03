@@ -75,6 +75,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
+from logger_config import logger
 # from serpapi import GoogleSearch
 
 load_dotenv()
@@ -101,7 +102,7 @@ def _save_cache(cache: dict) -> None:
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2, ensure_ascii=False)
     except Exception as exc:
-        print(f"[Cache] Could not save cache: {exc}")
+        logger.warning(f"[Cache] Could not save cache: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +445,9 @@ class GeminiClient(LLMClient):
       2. Change the one-line wiring in resolve_institution().
     """
 
-    MODEL_NAME = "gemini-2.5-flash-lite"
+    # MODEL_NAME = "gemini-2.5-flash-lite"
+    MODEL_NAME = "gemini-2-flash"
+
 
     _SYSTEM_PROMPT = """\
 You are an institution entity-resolution assistant for Indian medical colleges.
@@ -486,10 +489,10 @@ Your job:
     )
 
     GEMINI_MODELS = [
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3-flash",
     ]
 
     def resolve(
@@ -504,8 +507,11 @@ Your job:
         last_exc: Exception | None = None
 
         # 1. Google Gemini SDK Fallback Sequence
-        for model_name in self.GEMINI_MODELS:
-            print(f"[Gemini] Attempting resolution with {model_name}...")
+        for i, model_name in enumerate(self.GEMINI_MODELS):
+            if i == 0:
+                logger.info(f"• Trying {model_name}")
+            else:
+                logger.info(f"• Switching to {model_name}")
             try:
                 response = self._client.models.generate_content(
                     model=model_name,
@@ -522,21 +528,23 @@ Your job:
                 last_exc = exc
                 err_str = str(exc).lower()
                 if "503" in err_str or "unavailable" in err_str or "429" in err_str:
-                    print(
-                        f"[Gemini] {model_name} hit transient/capacity error: {exc}. "
-                        "Trying next model..."
+                    logger.info("• Quota exceeded")
+                    logger.debug(
+                        f"[Gemini] {model_name} hit transient/capacity error: {exc}."
                     )
                     continue
-                print(f"[Gemini] {model_name} failed: {exc}. Trying next model...")
+                logger.debug(f"[Gemini] {model_name} failed: {exc}.")
+                logger.info(f"• {model_name} failed")
                 continue
 
         # 2. OpenRouter Fallback
-        print("[Resolver] All Google models failed. Falling back to OpenRouter (openrouter/free)...")
+        logger.info("• Falling back to OpenRouter")
+        logger.debug("[Resolver] All Google models failed. Falling back to OpenRouter (openrouter/free)...")
         try:
             raw_text = self._call_openrouter(user_message)
             return self._parse_json_response(raw_text, extracted_name)
         except Exception as exc:
-            print(f"[Resolver] OpenRouter fallback also failed: {exc}")
+            logger.error(f"[Resolver] OpenRouter fallback also failed: {exc}")
             raise last_exc or RuntimeError("All resolution models failed.")
 
     def _parse_json_response(self, raw_text: str, extracted_name: str) -> dict:
@@ -684,37 +692,40 @@ def resolve_institution(
 
     if best_cache_score > 90 and best_cache_key is not None:
         cached = cache[best_cache_key]
-        print(f"[Resolver] Cache HIT (score={best_cache_score}) -> {cached['official_name']}")
+        logger.info("• Cache hit")
+        logger.debug(f"[Resolver] Cache HIT (score={best_cache_score}) -> {cached['official_name']}")
         return {
             "verified_college_name":    cached["official_name"],
-            "verified_college_address": cleaned_ocr_address,   # always use OCR address
+            "verified_college_address": cached.get("official_address", cleaned_ocr_address),
             "city":                     cached.get("city", ""),
             "resolution_failed":        False,
             "match_confidence":         100,  # trusted cache entry
+            "via_cache":                True,
         }
 
-    print(f"[Resolver] Cache MISS (best_score={best_cache_score}). Proceeding to web search.")
+    logger.info("• Cache miss")
+    logger.debug(f"[Resolver] Cache MISS (best_score={best_cache_score}). Proceeding to web search.")
 
     # -----------------------------------------------------------------------
     # Step 1 & 2 — Ask the LLM to directly search and identify the institution
     # -----------------------------------------------------------------------
     try:
-        print("[Resolver] Sending candidates to Gemini with Native Search Grounding...")
+        logger.debug("[Resolver] Sending candidates to Gemini with Native Search Grounding...")
         llm_result = llm_client.resolve(extracted_name, extracted_address)
 
     except json.JSONDecodeError as exc:
-        print(f"[Resolver] Gemini returned malformed JSON: {exc}")
+        logger.debug(f"[Resolver] Gemini returned malformed JSON: {exc}")
         return fallback
 
     except Exception as exc:
-        print(f"[Resolver] Gemini call failed: {exc}")
+        logger.debug(f"[Resolver] Gemini call failed: {exc}")
         return fallback
 
     # -----------------------------------------------------------------------
     # Step 3 — Validate LLM response has required keys
     # -----------------------------------------------------------------------
     if "verified_college_name" not in llm_result:
-        print(f"[Resolver] Gemini response missing required keys: {llm_result}")
+        logger.debug(f"[Resolver] Gemini response missing required keys: {llm_result}")
         return fallback
 
     # -----------------------------------------------------------------------
@@ -726,12 +737,12 @@ def resolve_institution(
 
     match_confidence = _compute_confidence(verified_name, extracted_name)
     label            = _confidence_label(match_confidence)
-    print(f"[Resolver] Match confidence: {match_confidence} ({label}) — "
+    logger.debug(f"[Resolver] Match confidence: {match_confidence} ({label}) — "
           f"'{verified_name}' vs '{extracted_name}'")
 
     # Reject low-confidence matches to avoid polluting output with bad candidates
     if match_confidence < _CONFIDENCE_REJECT_THRESHOLD:
-        print(
+        logger.debug(
             f"[Resolver] Confidence {match_confidence} < {_CONFIDENCE_REJECT_THRESHOLD} "
             "(Reject threshold). Returning fallback."
         )
@@ -758,13 +769,13 @@ def resolve_institution(
     if match_confidence >= _CONFIDENCE_REJECT_THRESHOLD:
         cache[norm_key] = {
             "official_name": final_name,
+            "official_address": final_address,
             "city":          city,
-            # address intentionally excluded — OCR address varies per document
         }
         _save_cache(cache)
-        print(f"[Cache] Saved: {norm_key!r} (confidence={match_confidence})")
+        logger.debug(f"[Cache] Saved: {norm_key!r} (confidence={match_confidence})")
 
-    print("[Resolver] Institution resolved.")
-    print(f"Verified College: {final_name}")
+    logger.debug("[Resolver] Institution resolved.")
+    logger.debug(f"Verified College: {final_name}")
 
     return result

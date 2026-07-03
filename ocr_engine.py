@@ -1,4 +1,17 @@
 import os
+import logging as py_logging
+from logger_config import logger
+from tqdm import tqdm
+
+# Suppress Paddle C++ and Python logging
+os.environ["GLOG_minloglevel"] = "2"
+import logging as py_logging
+ppocr_logger = py_logging.getLogger('ppocr')
+ppocr_logger.setLevel(py_logging.ERROR)
+ppocr_logger.propagate = False
+for h in ppocr_logger.handlers[:]:
+    ppocr_logger.removeHandler(h)
+ppocr_logger.addHandler(py_logging.NullHandler())
 
 # Force protobuf pure-Python implementation so that PaddlePaddle's older
 # protobuf requirement and google-genai's newer requirement don't collide
@@ -23,36 +36,34 @@ except AttributeError:
 import paddle
 from paddleocr import PaddleOCR
 
-print("Loading PaddleOCR model...")
-
 cuda_available = paddle.device.is_compiled_with_cuda()
-print(f"CUDA Available: {cuda_available}")
-
+gpu_info = "CPU Only"
 if cuda_available:
-    print("Compiled with CUDA: True")
     current_device = paddle.device.get_device()
-    print(f"Current Device: {current_device}")
     try:
         if 'gpu' in current_device:
             gpu_id = int(current_device.split(':')[1])
             gpu_name = paddle.device.cuda.get_device_name(gpu_id)
-            print(f"GPU Name: {gpu_name}")
+            gpu_info = f"{gpu_name} (CUDA Enabled)"
     except Exception:
-        pass
-else:
-    print("Compiled with CUDA: False")
+        gpu_info = "CUDA Enabled"
+
+logger.debug(f"[*] GPU: {gpu_info}")
 
 # Initialize globally so we don't reload the model on every page.
 # use_angle_cls=True enables PaddleOCR's built-in 0°/180° text-line classifier.
 # 90°/270° rotation is handled upstream in document_processor.py via the
 # brute-force 4-angle confidence sweep (_find_best_rotation).
-ocr = PaddleOCR(
-    use_angle_cls=True,
-    lang="en",
-    use_gpu=cuda_available,
-    show_log=False,
-)
-print("PaddleOCR ready.")
+with tqdm(total=1, desc="Loading PaddleOCR", bar_format="{l_bar}{bar:20}|", colour="#FF69B4", leave=False) as pbar:
+    ocr = PaddleOCR(
+        use_angle_cls=True,
+        lang="en",
+        use_gpu=cuda_available,
+        show_log=False,
+    )
+    pbar.update(1)
+
+logger.debug("[*] PaddleOCR Ready")
 
 
 def ocr_image(image_path):
@@ -106,5 +117,5 @@ def ocr_image(image_path):
         }
 
     except Exception as e:
-        print(f"PaddleOCR Error on {image_path}: {e}")
+        logger.error(f"PaddleOCR Error on {image_path}: {e}")
         return empty_result
