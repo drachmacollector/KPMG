@@ -3,15 +3,25 @@ import logging as py_logging
 from logger_config import logger
 from tqdm import tqdm
 
-# Suppress Paddle C++ and Python logging
+# Suppress Paddle C++ noise and the recurring PaddleOCR GPU-default warning.
 os.environ["GLOG_minloglevel"] = "2"
-import logging as py_logging
-ppocr_logger = py_logging.getLogger('ppocr')
-ppocr_logger.setLevel(py_logging.ERROR)
-ppocr_logger.propagate = False
-for h in ppocr_logger.handlers[:]:
-    ppocr_logger.removeHandler(h)
-ppocr_logger.addHandler(py_logging.NullHandler())
+
+
+class _PPOCRGpuWarningFilter(py_logging.Filter):
+    def filter(self, record):
+        return "The first GPU is used for inference by default" not in record.getMessage()
+
+
+def _suppress_ppocr_gpu_warning():
+    ppocr_logger = py_logging.getLogger("ppocr")
+    if not any(isinstance(f, _PPOCRGpuWarningFilter) for f in ppocr_logger.filters):
+        ppocr_logger.addFilter(_PPOCRGpuWarningFilter())
+    for handler in ppocr_logger.handlers:
+        if not any(isinstance(f, _PPOCRGpuWarningFilter) for f in handler.filters):
+            handler.addFilter(_PPOCRGpuWarningFilter())
+
+
+_suppress_ppocr_gpu_warning()
 
 # Force protobuf pure-Python implementation so that PaddlePaddle's older
 # protobuf requirement and google-genai's newer requirement don't collide
@@ -35,6 +45,8 @@ except AttributeError:
 
 import paddle
 from paddleocr import PaddleOCR
+
+_suppress_ppocr_gpu_warning()
 
 cuda_available = paddle.device.is_compiled_with_cuda()
 gpu_info = "CPU Only"
