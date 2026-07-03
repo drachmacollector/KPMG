@@ -1,4 +1,4 @@
-# MAHABOCW Medical Scholarship Verification Automation
+# MAHABOCW Workers Scheme Verification Automation
 
 **Project type:** Intelligent Document Processing (IDP) + browser automation
 **Language:** Python
