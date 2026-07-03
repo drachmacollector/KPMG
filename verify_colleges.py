@@ -80,7 +80,7 @@ def download_document(url, save_path):
         except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
             if attempt < len(delays):
                 wait_time = delays[attempt]
-                logger.debug(f"• Retry {attempt + 1}/{len(delays)} for {os.path.basename(save_path)} in {wait_time}s ({e})")
+                logger.debug(f"- Retry {attempt + 1}/{len(delays)} for {os.path.basename(save_path)} in {wait_time}s ({e})")
                 time.sleep(wait_time)
             else:
                 logger.error(f"Download failed after retries: {e}")
@@ -99,10 +99,10 @@ def save_with_retry(df, filename, sheet_name):
                 sheet_name=sheet_name,
                 index=False
             )
-            logger.info("✓ Progress Saved\n")
+            logger.info("[OK] Progress Saved\n")
             return
         except PermissionError:
-            logger.info("• Output Excel file is currently open. Retrying...")
+            logger.info("- Output Excel file is currently open. Retrying...")
             time.sleep(5)
 
 
@@ -210,7 +210,7 @@ def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, pr
         if not download_document(url, output_path):
             continue
 
-        logger.info(f"✓ {doc_type.replace('_', ' ').title()} downloaded")
+        logger.info(f"[OK] {doc_type.replace('_', ' ').title()} downloaded")
 
         file_hash = calculate_sha256(output_path)
         if file_hash in processed_hashes:
@@ -230,7 +230,7 @@ def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, pr
 
     if skipped:
         for skip_doc in skipped:
-            logger.info(f"• {skip_doc} not uploaded")
+            logger.info(f"- {skip_doc} not uploaded")
     if downloaded_count > 0:
         logger.debug(f"[*] Downloaded {downloaded_count}/{len(doc_subset)} documents")
 
@@ -297,7 +297,7 @@ def ocr_and_extract(page_paths):
         if result.get("relevant"):
             page_metrics["is_relevant"] = True
             doc_type_display = result["document_type"].replace('_', ' ').title()
-            logger.info(f"✓ Relevant document: {doc_type_display}")
+            logger.info(f"[OK] Relevant document: {doc_type_display}")
 
         if not result.get("relevant"):
             continue
@@ -315,7 +315,7 @@ def ocr_and_extract(page_paths):
     if best_result:
         logger.debug("College extracted successfully.")
     else:
-        logger.info("• No relevant document found")
+        logger.info("- No relevant document found")
         
     return best_result, all_ocr_metrics
 
@@ -335,7 +335,7 @@ def write_result(df, index, best_result, ocr_metrics):
         # returns the original values and sets resolution_failed=True.
         # ------------------------------------------------------------------
         try:
-            logger.info("\nVerifying College...")
+            logger.info("\nVerifying College via LLM Search...")
             resolved = resolve_institution(
                 extracted_name=college_name,
                 extracted_address=college_address,
@@ -368,12 +368,12 @@ def write_result(df, index, best_result, ocr_metrics):
 
     if resolved and not resolved.get("resolution_failed"):
         v_name = (resolved.get("verified_college_name") or "").upper()
-        logger.info(f"\n✓ College Verified")
+        logger.info(f"\n[OK] College Verified")
         logger.info(v_name + "\n")
         logger.info(f"Accuracy: {accuracy}%")
         logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
     else:
-        logger.info(f"\n✗ Resolution Failed\n")
+        logger.info(f"\n[FAILED] Resolution Failed\n")
         logger.info(f"Accuracy: {accuracy}%")
         logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
 
@@ -405,20 +405,19 @@ with sync_playwright() as p:
     )
 
     # --- THE HUMAN HANDOFF ---
-    logger.info("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    logger.info("\n------------------------------------------------------------\n")
     logger.info("Human Setup Required")
-    logger.info("• Preferably don't maximize or resize the window")
-    logger.info("• Log in manually")
-    logger.info("• Click on the 'Claims' section")
-    logger.info("• Drag the 'Acknowledgement Number' column into view")
-    logger.info("• Click the 3 bars on the column, click the funnel, and leave the text box open\n")
+    logger.info("- Preferably don't maximize or resize the window")
+    logger.info("- Log in manually")
+    logger.info("- Click on the 'Claims' section")
+    logger.info("- Drag the 'Acknowledgement Number' column into view")
+    logger.info("- Click the 3 bars on the column, click the funnel, and leave the text box open\n")
 
-    input("👉 Press ENTER here in the terminal when you are ready to start the loop...")
+    input("Press ENTER here in the terminal when you are ready to start the loop...")
     logger.debug("Starting automated extraction...")
 
     rows_to_process = pd.concat([
-    df.iloc[0:14],    # Excel rows 2–15
-    df.iloc[23:79]    # Excel rows 25–80
+    df.iloc[0:30],    # Excel rows 2–30
     ])
     
     with tqdm(
@@ -442,7 +441,7 @@ with sync_playwright() as p:
                 main_pbar.update(1)
                 continue
 
-            logger.info("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+            logger.info("\n------------------------------------------------------------\n")
             logger.info("Claim")
             logger.info(f"Acknowledgement: {ack_no}\n")
 
@@ -509,7 +508,7 @@ with sync_playwright() as p:
                 logger.info("Documents Found")
                 for doc_key in documents.keys():
                     doc_display = doc_key.replace('_', ' ').title()
-                    logger.info(f"✓ {doc_display}")
+                    logger.info(f"[OK] {doc_display}")
                 logger.info("\nDownloading Documents...")
     
                 pages_folder = os.path.join(claim_folder, "pages")
@@ -544,7 +543,7 @@ with sync_playwright() as p:
                         logger.error(f"Phase 1 OCR/Extraction failed: {e}")
     
                 if is_satisfactory(best_result):
-                    logger.debug("[Phase 1] SUCCESS — satisfactory result obtained.")
+                    logger.debug("[Phase 1] SUCCESS - satisfactory result obtained.")
                     write_result(df, index, best_result, all_ocr_metrics)
     
                 else:
@@ -575,11 +574,11 @@ with sync_playwright() as p:
                         # Prefer Phase 2 result if satisfactory; else keep Phase 1 result
                         if is_satisfactory(phase2_result):
                             best_result = phase2_result
-                            logger.debug("[Phase 2] SUCCESS — satisfactory result from fallback docs.")
+                            logger.debug("[Phase 2] SUCCESS - satisfactory result from fallback docs.")
                         elif phase2_result and phase2_result.get("relevant"):
                             if not is_satisfactory(best_result):
                                 best_result = phase2_result
-                            logger.debug("[Phase 2] Partial result — using best available.")
+                            logger.debug("[Phase 2] Partial result - using best available.")
                         else:
                             logger.debug("[Phase 2] No improvement from fallback docs.")
                     else:
