@@ -4,6 +4,7 @@ import tempfile
 import pymupdf as fitz  # PyMuPDF
 import cv2
 from PIL import Image, ImageOps
+from logger_config import logger
 
 # ---------------------------------------------------------
 # SHA256
@@ -44,7 +45,7 @@ def _apply_exif_rotation(image_path):
             return True
         return False
     except Exception as e:
-        print(f"  [EXIF] Could not apply EXIF rotation on {image_path}: {e}")
+        logger.debug(f"[EXIF] Could not apply EXIF rotation on {image_path}: {e}")
         return False
 
 
@@ -90,7 +91,7 @@ def _find_best_rotation(image_path: str) -> int:
         avg_conf   = metrics["avg_confidence"]
         line_count = metrics["line_count"]
 
-        print(f"  [Rotation] {angle:3d}° → avg_conf={avg_conf:.4f}  lines={line_count}")
+        logger.debug(f"[Rotation] {angle:3d}° → avg_conf={avg_conf:.4f}  lines={line_count}")
 
         if (avg_conf > best_avg_conf or
                 (avg_conf == best_avg_conf and line_count > best_line_count)):
@@ -121,13 +122,13 @@ def normalize_orientation(image_path):
     # --- Stage 1: EXIF ---
     exif_changed = _apply_exif_rotation(image_path)
     if exif_changed:
-        print(f"  [EXIF] Applied EXIF rotation to {os.path.basename(image_path)}")
+        logger.debug(f"[EXIF] Applied EXIF rotation to {os.path.basename(image_path)}")
 
     # --- Stage 2: PaddleOCR brute-force rotation sweep ---
     angle = _find_best_rotation(image_path)
 
     if angle == 0:
-        print(f"  [Rotation] Best angle is 0° — no rotation needed.")
+        logger.debug(f"[Rotation] Best angle is 0° — no rotation needed.")
         return
 
     img = cv2.imread(image_path)
@@ -136,7 +137,7 @@ def normalize_orientation(image_path):
 
     rotated = cv2.rotate(img, _CV_ROTATE[angle])
     cv2.imwrite(image_path, rotated)
-    print(f"  [Rotation] Applied {angle}° CW rotation to {os.path.basename(image_path)}")
+    logger.debug(f"[Rotation] Applied {angle}° CW rotation to {os.path.basename(image_path)}")
 
 # ---------------------------------------------------------
 # PDF -> PNG
@@ -212,7 +213,7 @@ def normalize_document(filepath, output_folder, document_name):
             f"{document_name}_page"
         )
 
-    elif extension in [".jpg", ".jpeg", ".png"]:
+    elif extension in [".jpg", ".jpeg", ".png", ".webp"]:
 
         return image_to_png(
             filepath,
@@ -221,5 +222,5 @@ def normalize_document(filepath, output_folder, document_name):
         )
 
     else:
-            print(f"⚠️ Warning: Unsupported or missing file extension '{extension}'. Skipping.")
+            logger.warning(f"Unsupported or missing file extension '{extension}'. Skipping.")
             return []

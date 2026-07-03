@@ -31,3 +31,5 @@ test_web_resolver_new.py
 # Added by user
 requirements.txt
 institution_cache.json
+logs/
+logger_config.py
