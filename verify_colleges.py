@@ -421,7 +421,7 @@ with sync_playwright() as p:
     logger.debug("Starting automated extraction...")
 
     rows_to_process = pd.concat([
-    df.iloc[0:30],    # Excel rows 2–30
+    df.iloc[31:376],    # Excel rows 2–30
     ])
     
     with tqdm(
