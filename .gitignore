@@ -31,6 +31,8 @@ test_web_resolver_new.py
 
 # Added by user
 requirements.txt
+requirements-lock.txt
+MahaBOCW.png
 institution_cache.json
 logs/
 logger_config.py
