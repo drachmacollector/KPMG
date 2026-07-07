@@ -233,7 +233,7 @@ OPENROUTER_API_KEY=...
 
 ## 4. Runtime Artifacts (not tracked in git)
 
-- `requirements.txt` — human-maintained install guide (`requirements-lock.txt` is the frozen snapshot that *is* tracked).
+- `requirements.txt` — human-maintained install guide (`requirements-lock.txt` is the frozen snapshot (not tracked either)).
 - `logger_config.py` — central logging setup; clean console output plus timestamped DEBUG log files under `logs/`.
 - `institution_cache.json` — persisted resolver cache keyed by normalized institution name, storing official name/address/city plus known aliases.
 - `downloads/` — per-claim downloaded documents and normalized page images.
