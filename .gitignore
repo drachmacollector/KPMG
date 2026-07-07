@@ -35,4 +35,3 @@ requirements-lock.txt
 MahaBOCW.png
 institution_cache.json
 logs/
-logger_config.py
