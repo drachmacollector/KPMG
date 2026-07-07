@@ -5,7 +5,7 @@
 **Target users:** Maharashtra Building & Other Construction Workers Welfare Board (MAHABOCW) verification team
 **Status:** Active development
 
-![MAHABOCW portal](../MahaBOCW.png)
+![MAHABOCW portal](./MahaBOCW.png)
 
 ## 1. Purpose
 
