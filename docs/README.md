@@ -85,6 +85,15 @@ python verify_colleges.py
 
 The browser opens in non-headless mode. Log in to the MAHABOCW portal manually, open the Claims section, bring the Acknowledgement Number filter into view, then return to the terminal and press Enter. The script processes the configured row window, saves documents under `downloads/`, logs to `logs/`, and updates the output Excel workbook — resuming safely if interrupted, since already-processed rows are skipped.
 
+## 5. Desktop GUI Application
+
+A user-friendly desktop application is available to configure and run the pipeline without using the terminal.
+
+- **Features**: Visual settings configuration, live log streaming, progress tracking, and OS-level pause/resume functionality.
+- **Tech Stack**: Built with Python and PySide6.
+- **Location**: All GUI code and packaging scripts are located in the [`gui/`](../gui/) directory.
+- **Setup & Usage**: See the [GUI Developer Guide](../gui/README.md) for instructions on how to run and package the app.
+
 ---
 
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for full stage-by-stage technical detail, and [`AGENTS.md`](./AGENTS.md) if you're an AI coding assistant working in this repo.
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for full details on the GUI's isolated subprocess architecture, and [`AGENTS.md`](./AGENTS.md) if you're an AI coding assistant working in this repo.
