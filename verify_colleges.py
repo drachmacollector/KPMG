@@ -19,19 +19,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# CONFIGURATION
-# ---------------------------------------------------------------------------
 
 excel_file = os.environ["MAHABOCW_INPUT_FILE"]
 target_sheet_name = os.environ["MAHABOCW_SHEET_NAME"]
 output_excel_file = os.environ["MAHABOCW_OUTPUT_FILE"]
 
+process_all = os.environ.get("EXCEL_PROCESS_ALL", "false").lower() == "true"
+
+start_row_env = os.environ.get("EXCEL_START_ROW")
+end_row_env = os.environ.get("EXCEL_END_ROW")
+
+start_row = int(start_row_env) if start_row_env else None
+end_row = int(end_row_env) if end_row_env else None
+
 # Rows with accuracy below this threshold are flagged for manual review.
-# Adjust between 0 and 100 as needed.
 ACCURACY_THRESHOLD = 80
 
-# ---------------------------------------------------------------------------
 
 logger.debug("[*] Initializing MAHABOCW Verification Engine...")
 with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour="green") as pbar:
@@ -56,7 +59,7 @@ with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour=
     logger.debug("Columns Pandas actually sees:")
     logger.debug(df.columns.tolist())
     pbar.update(1)
-# ----------------------
+
 cols_to_init = [
     'corrected_college_name',
     'corrected_college_address',
@@ -174,8 +177,7 @@ def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
 
     # --- Component 3: Cross-document agreement (30 pts) ---
     # Only pages identified as Bonafide or Student ID by the LLM count.
-    # Irrelevant but readable docs (Aadhaar, Ration Card, Self Declaration)
-    # must NOT contribute to this score.
+    # Irrelevant but readable docs (Aadhaar, Ration Card, Self Declaration must NOT contribute to this score.
     relevant_docs = sum(
         1 for m in ocr_metrics_list
         if m.get("is_relevant") and m.get("line_count", 0) > 0
@@ -424,9 +426,10 @@ with sync_playwright() as p:
     input("Press ENTER here in the terminal when you are ready to start the loop...")
     logger.debug("Starting automated extraction...")
 
-    rows_to_process = pd.concat([
-    df.iloc[31:376],    # Excel rows 2–30
-    ])
+    if process_all:
+        rows_to_process = df
+    else:
+        rows_to_process = df.iloc[start_row:end_row]
     
     with tqdm(
         total=len(rows_to_process),
