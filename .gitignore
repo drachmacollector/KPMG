@@ -33,6 +33,5 @@ test_runner_standalone.py
 
 # Added by user
 requirements.txt
-requirements-lock.txt
 logs/
 MAHABOCW_GUI_Implementation_Plan.md
