@@ -91,7 +91,7 @@ Place a 256×256 `.ico` file at `gui/app/resources/icon.ico`.
 
 ### 4. Build the Inno Setup installer
 
-1. Copy `SETUP_INSTRUCTIONS.pdf` (the client checklist from Section 7 of the plan) into `gui/packaging/`.
+1. Copy `SETUP_INSTRUCTIONS.md` (the client checklist from Section 7 of the plan) into `gui/packaging/`.
 2. Open `gui/packaging/installer.iss` in **Inno Setup Compiler** and click **Build**.
 3. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
 

@@ -4,7 +4,7 @@
 ; Build instructions:
 ;   1. Build the PyInstaller onedir first (from gui/ directory):
 ;        pyinstaller packaging/mahabocw_gui.spec
-;   2. Copy SETUP_INSTRUCTIONS.pdf into gui/packaging/
+;   2. Copy SETUP_INSTRUCTIONS.md into gui/packaging/
 ;   3. Open this .iss file in Inno Setup Compiler and click Build.
 ;      Output: gui/packaging/Output/MAHABOCW-GUI-Setup.exe
 
@@ -34,7 +34,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; PyInstaller onedir output — everything in the build folder.
 Source: "..\dist\mahabocw_gui\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Setup instructions handout — shown to the user at the end of installation.
-Source: "SETUP_INSTRUCTIONS.pdf"; DestDir: "{app}"; Flags: ignoreversion
+Source: "SETUP_INSTRUCTIONS.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MAHABOCW Verification Tool"; Filename: "{app}\mahabocw_gui.exe"; WorkingDir: "{app}"
@@ -45,7 +45,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Run]
 ; Open the setup instructions PDF after install completes (optional, skippable).
-Filename: "{app}\SETUP_INSTRUCTIONS.pdf"; Description: "View pipeline setup instructions"; Flags: postinstall shellexec skipifsilent
+Filename: "{app}\SETUP_INSTRUCTIONS.md"; Description: "View pipeline setup instructions"; Flags: postinstall shellexec skipifsilent
 ; Launch the application immediately after install (optional).
 Filename: "{app}\mahabocw_gui.exe"; Description: "Launch MAHABOCW Verification Tool"; Flags: postinstall nowait skipifsilent
 
