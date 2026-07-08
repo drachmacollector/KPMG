@@ -8,6 +8,11 @@ claims for the same college write the same name and address to Excel.
 
 from __future__ import annotations
 
+
+class LLMUnverifiableError(ValueError):
+    """Raised when the LLM explicitly returns verified=false (not a parse error)."""
+
+
 import json
 import os
 import re
@@ -227,7 +232,11 @@ def _cache_record_is_complete(record: dict) -> bool:
     )
 
 
-def _find_cache_record(cache: dict, extracted_name: str) -> tuple[str | None, dict | None, int]:
+def _find_cache_record(
+    cache: dict,
+    extracted_name: str,
+    extracted_address: str = "",
+) -> tuple[str | None, dict | None, int]:
     norm_key = _normalise_key(extracted_name)
     best_key = None
     best_score = 0
@@ -242,6 +251,31 @@ def _find_cache_record(cache: dict, extracted_name: str) -> tuple[str | None, di
             best_score = score
 
     if best_key and best_score >= CACHE_HIT_THRESHOLD:
+        # City guard: before accepting the fuzzy name hit, ensure the cached
+        # city is at least loosely present in the incoming OCR address.  This
+        # prevents colleges that share a near-identical name in *different*
+        # towns (common in Maharashtra) from silently merging into the same
+        # cache entry and writing the wrong city's address onto a claim.
+        cached_city = (cache[best_key].get("city") or "").strip()
+        if cached_city and extracted_address:
+            ocr_city_guess = _extract_city_from_address(extracted_address)
+            # Accept if either:
+            #   (a) cached city appears verbatim in the raw OCR address, or
+            #   (b) fuzzy match between cached city and OCR-extracted city ≥ 80
+            city_in_addr = cached_city.lower() in extracted_address.lower()
+            city_fuzzy_ok = bool(
+                ocr_city_guess
+                and fuzz.token_sort_ratio(
+                    cached_city.lower(), ocr_city_guess.lower()
+                ) >= 80
+            )
+            if not (city_in_addr or city_fuzzy_ok):
+                logger.debug(
+                    f"[Cache] Name score={best_score} but city mismatch: "
+                    f"cached={cached_city!r} vs ocr_guess={ocr_city_guess!r} "
+                    f"(addr={extracted_address!r}) — ignoring cache hit."
+                )
+                return None, None, round(best_score)
         return best_key, cache[best_key], round(best_score)
     return None, None, round(best_score)
 
@@ -265,8 +299,13 @@ def _parse_model_json(raw_text: str) -> dict:
     data = json.loads(raw_text)
     if not isinstance(data, dict):
         raise ValueError("LLM returned non-object JSON")
+    # Distinguish an explicit "I cannot verify" response from other failures so
+    # callers can log it at DEBUG level and fall through to the normal fallback
+    # without surfacing a spurious ERROR entry in the log.
     if data.get("verified") is not True:
-        raise ValueError("LLM could not verify institution")
+        raise LLMUnverifiableError(
+            "LLM could not verify institution (verified=false in response)"
+        )
 
     required = ("verified_college_name", "verified_college_address", "city")
     missing = [key for key in required if not str(data.get(key) or "").strip()]
@@ -341,7 +380,17 @@ class GeminiResolver:
         )
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode("utf-8"))
-            return result["choices"][0]["message"]["content"].strip()
+            content = (
+                result.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content")
+            )
+            if not content or not str(content).strip():
+                raise ValueError(
+                    "OpenRouter returned an empty or malformed response "
+                    f"(choices={result.get('choices')})"
+                )
+            return str(content).strip()
 
 
 def _fallback(extracted_name: str, extracted_address: str, confidence: int = 0) -> dict:
@@ -358,7 +407,10 @@ def _fallback(extracted_name: str, extracted_address: str, confidence: int = 0) 
 def resolve_institution(extracted_name: str, extracted_address: str) -> dict:
     cleaned_ocr_address = clean_address(extracted_address)
     cache = _load_cache()
-    cache_key, cached, cache_score = _find_cache_record(cache, extracted_name)
+    # Pass the raw OCR address so the cache lookup can cross-check city.
+    cache_key, cached, cache_score = _find_cache_record(
+        cache, extracted_name, extracted_address
+    )
 
     if cached:
         logger.info("- Cache hit")
@@ -380,6 +432,10 @@ def resolve_institution(extracted_name: str, extracted_address: str) -> dict:
             extracted_name=extracted_name,
             extracted_address=cleaned_ocr_address,
         )
+    except LLMUnverifiableError as exc:
+        # The model said it cannot verify — not a hard failure, just flag it.
+        logger.debug(f"[Resolver] LLM declined to verify institution: {exc}")
+        return _fallback(extracted_name, cleaned_ocr_address)
     except Exception as exc:
         logger.debug(f"[Resolver] Online resolution failed: {exc}")
         return _fallback(extracted_name, cleaned_ocr_address)
@@ -410,7 +466,11 @@ def resolve_institution(extracted_name: str, extracted_address: str) -> dict:
         return _fallback(extracted_name, cleaned_ocr_address, confidence)
 
     canonical_key = _normalise_key(official_name)
-    existing_key, existing_record, _ = _find_cache_record(cache, official_name)
+    # When looking up the official name to merge cache entries, pass the
+    # resolved city as a pseudo-address so city guard can still be applied.
+    existing_key, existing_record, _ = _find_cache_record(
+        cache, official_name, city
+    )
     write_key = existing_key or canonical_key
     aliases = set((existing_record or {}).get("aliases", []))
     aliases.add(_normalise_key(extracted_name))
