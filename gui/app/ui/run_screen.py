@@ -95,16 +95,17 @@ class RunScreen(QWidget):
 
     def _build_header(self) -> QWidget:
         header = QWidget()
-        header.setFixedHeight(90)
+        header.setFixedHeight(80)
         header.setStyleSheet(
             f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             f"stop:0 {COLORS['bg_deep']}, stop:1 {COLORS['bg_surface']});"
             f"border-bottom: 1px solid {COLORS['border']};"
         )
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setContentsMargins(40, 16, 40, 16)
 
         col = QVBoxLayout()
+        col.setSpacing(2)
         self._header_title = QLabel("Run")
         self._header_title.setObjectName("heading")
         self._header_sub = QLabel("Ready — click Start to begin processing")
@@ -171,14 +172,14 @@ class RunScreen(QWidget):
         w = QWidget()
         w.setStyleSheet(f"background: {COLORS['bg_base']};")
         layout = QVBoxLayout(w)
-        layout.setContentsMargins(24, 8, 24, 8)
+        layout.setContentsMargins(24, 10, 24, 10)
         layout.setSpacing(6)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setMinimum(0)
         self._progress_bar.setValue(0)
         self._progress_bar.setFormat("")  # we'll use a label instead
-        self._progress_bar.setFixedHeight(12)
+        self._progress_bar.setFixedHeight(10)
         layout.addWidget(self._progress_bar)
 
         self._progress_label = QLabel("No run in progress")
@@ -190,32 +191,32 @@ class RunScreen(QWidget):
 
     def _build_button_bar(self) -> QWidget:
         bar = QWidget()
-        bar.setFixedHeight(72)
+        bar.setFixedHeight(68)
         bar.setStyleSheet(
             f"background: {COLORS['bg_surface']}; border-top: 1px solid {COLORS['border']};"
         )
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(24, 15, 24, 15)
+        layout.setSpacing(10)
 
         self._start_btn = QPushButton("▶  Start")
         self._start_btn.setObjectName("primary")
-        self._start_btn.setFixedHeight(40)
-        self._start_btn.setMinimumWidth(120)
+        self._start_btn.setFixedHeight(38)
+        self._start_btn.setMinimumWidth(110)
         self._start_btn.setCursor(Qt.PointingHandCursor)
         self._start_btn.clicked.connect(self._on_start)
 
         self._pause_btn = QPushButton("⏸  Pause")
-        self._pause_btn.setFixedHeight(40)
-        self._pause_btn.setMinimumWidth(120)
+        self._pause_btn.setFixedHeight(34)
+        self._pause_btn.setMinimumWidth(110)
         self._pause_btn.setCursor(Qt.PointingHandCursor)
         self._pause_btn.setEnabled(False)
         self._pause_btn.clicked.connect(self._on_pause_resume)
 
         self._cancel_btn = QPushButton("■  Cancel")
         self._cancel_btn.setObjectName("danger")
-        self._cancel_btn.setFixedHeight(40)
-        self._cancel_btn.setMinimumWidth(120)
+        self._cancel_btn.setFixedHeight(34)
+        self._cancel_btn.setMinimumWidth(110)
         self._cancel_btn.setCursor(Qt.PointingHandCursor)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self._on_cancel)

@@ -70,14 +70,14 @@ class DoneScreen(QWidget):
 
     def _build_header(self) -> QWidget:
         header = QWidget()
-        header.setFixedHeight(90)
+        header.setFixedHeight(80)
         header.setStyleSheet(
             f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             f"stop:0 {COLORS['bg_deep']}, stop:1 {COLORS['bg_surface']});"
             f"border-bottom: 1px solid {COLORS['border']};"
         )
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setContentsMargins(40, 16, 40, 16)
         title = QLabel("Run Complete")
         title.setObjectName("heading")
         layout.addWidget(title)
@@ -85,7 +85,7 @@ class DoneScreen(QWidget):
         badge = QLabel("Step 3 of 2 — Done ✓")
         badge.setStyleSheet(
             f"color: {COLORS['success']}; font-size: 12px; "
-            f"background: rgba(34,197,94,0.1); border-radius: 12px; "
+            f"background: rgba(34,197,94,0.1); border-radius: 10px; "
             f"padding: 4px 12px; border: 1px solid rgba(34,197,94,0.3);"
         )
         layout.addWidget(badge)
@@ -137,20 +137,20 @@ class DoneScreen(QWidget):
         # Action buttons
         self._open_output_btn = QPushButton("📂  Open Output File")
         self._open_output_btn.setObjectName("success_btn")
-        self._open_output_btn.setFixedHeight(44)
+        self._open_output_btn.setFixedHeight(40)
         self._open_output_btn.setCursor(Qt.PointingHandCursor)
         self._open_output_btn.clicked.connect(self._open_output)
         layout.addWidget(self._open_output_btn)
 
         self._open_log_btn = QPushButton("📋  Open Latest Log File")
-        self._open_log_btn.setFixedHeight(44)
+        self._open_log_btn.setFixedHeight(40)
         self._open_log_btn.setCursor(Qt.PointingHandCursor)
         self._open_log_btn.clicked.connect(self._open_log)
         layout.addWidget(self._open_log_btn)
 
         again_btn = QPushButton("↩  Run Again")
         again_btn.setObjectName("ghost")
-        again_btn.setFixedHeight(44)
+        again_btn.setFixedHeight(36)
         again_btn.setCursor(Qt.PointingHandCursor)
         again_btn.clicked.connect(self.run_again)
         layout.addWidget(again_btn)

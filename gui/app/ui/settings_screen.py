@@ -93,7 +93,7 @@ class SettingsScreen(QWidget):
         self._save_btn = QPushButton("Save & Continue →")
         self._save_btn.setObjectName("primary")
         self._save_btn.setMinimumWidth(200)
-        self._save_btn.setFixedHeight(44)
+        self._save_btn.setFixedHeight(42)
         self._save_btn.setCursor(Qt.PointingHandCursor)
         self._save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(self._save_btn)
@@ -104,16 +104,17 @@ class SettingsScreen(QWidget):
 
     def _build_header(self) -> QWidget:
         header = QWidget()
-        header.setFixedHeight(90)
+        header.setFixedHeight(80)
         header.setStyleSheet(
             f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             f"stop:0 {COLORS['bg_deep']}, stop:1 {COLORS['bg_surface']});"
             f"border-bottom: 1px solid {COLORS['border']};"
         )
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setContentsMargins(40, 16, 40, 16)
 
         title_col = QVBoxLayout()
+        title_col.setSpacing(2)
         title = QLabel("Settings")
         title.setObjectName("heading")
         sub = QLabel("Configure your pipeline before starting a run")
@@ -126,7 +127,7 @@ class SettingsScreen(QWidget):
         badge = QLabel("Step 1 of 2")
         badge.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12px; "
-            f"background: {COLORS['bg_elevated']}; border-radius: 12px; "
+            f"background: {COLORS['bg_elevated']}; border-radius: 10px; "
             f"padding: 4px 12px; border: 1px solid {COLORS['border']};"
         )
         layout.addWidget(badge)
@@ -156,7 +157,8 @@ class SettingsScreen(QWidget):
         self._python_browse.clicked.connect(self._browse_python)
         self._python_test_btn = QPushButton("Test")
         self._python_test_btn.setObjectName("ghost")
-        self._python_test_btn.setFixedWidth(70)
+        self._python_test_btn.setFixedWidth(60)
+        self._python_test_btn.setFixedHeight(34)
         self._python_test_btn.setCursor(Qt.PointingHandCursor)
         self._python_test_btn.clicked.connect(self._test_python)
         row2.addWidget(self._python_exe_edit)
@@ -165,7 +167,7 @@ class SettingsScreen(QWidget):
         layout.addLayout(row2)
 
         self._python_version_label = QLabel("")
-        self._python_version_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; padding-left: 4px;")
+        self._python_version_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; padding-left: 4px;")
         layout.addWidget(self._python_version_label)
 
         return group
@@ -220,7 +222,8 @@ class SettingsScreen(QWidget):
         self._gemini_key_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._gemini_show_btn = QPushButton("Show")
         self._gemini_show_btn.setObjectName("ghost")
-        self._gemini_show_btn.setFixedWidth(60)
+        self._gemini_show_btn.setFixedWidth(56)
+        self._gemini_show_btn.setFixedHeight(34)
         self._gemini_show_btn.setCursor(Qt.PointingHandCursor)
         self._gemini_show_btn.setCheckable(True)
         self._gemini_show_btn.toggled.connect(self._toggle_key_visibility)
@@ -232,7 +235,7 @@ class SettingsScreen(QWidget):
             "ⓘ  The key is stored in plaintext in your AppData folder. "
             "Contact your IT team if a more secure option is required."
         )
-        note.setStyleSheet(f"color: {COLORS['text_disabled']}; font-size: 11px;")
+        note.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -279,7 +282,7 @@ class SettingsScreen(QWidget):
             "(so row 2 is the first data row). Leave on 'all' to process the "
             "entire sheet."
         )
-        note.setStyleSheet(f"color: {COLORS['text_disabled']}; font-size: 11px;")
+        note.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -309,7 +312,8 @@ class SettingsScreen(QWidget):
     @staticmethod
     def _browse_btn(label: str = "Browse...") -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedWidth(100)
+        btn.setFixedWidth(90)
+        btn.setFixedHeight(34)
         btn.setCursor(Qt.PointingHandCursor)
         return btn
 
