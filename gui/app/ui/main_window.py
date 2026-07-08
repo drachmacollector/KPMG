@@ -145,16 +145,33 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _count_input_rows(settings: Settings) -> Optional[int]:
         """
-        Count the number of data rows in the input workbook (read-only, fast).
-        Returns None if anything goes wrong — the Run screen handles None gracefully
-        by showing an indeterminate progress counter.
+        Count the number of data rows that will actually be processed.
+
+        In 'all' mode this is the full sheet minus the header row.
+        In 'range' mode this is  end_row - start_row + 1  clamped to the
+        actual sheet size (both values are 1-indexed, header = row 1).
+
+        Returns None if anything goes wrong — the Run screen handles None
+        gracefully by showing an indeterminate progress counter.
         """
         try:
             wb = openpyxl.load_workbook(settings.input_file, read_only=True)
             ws = wb[settings.sheet_name]
             # max_row includes the header row — subtract 1 for data rows.
-            total = (ws.max_row or 1) - 1
+            sheet_data_rows = max((ws.max_row or 1) - 1, 0)
             wb.close()
-            return max(total, 0) or None
+
+            if settings.process_mode == "range" and settings.start_row and settings.end_row:
+                try:
+                    start = int(settings.start_row)   # 1-indexed, ≥2
+                    end = int(settings.end_row)        # 1-indexed, inclusive
+                    # Convert to data-row count (row 1 = header, row 2 = first data row)
+                    range_count = max(end - start + 1, 0)
+                    # Clamp to what the sheet actually contains
+                    return min(range_count, sheet_data_rows) or None
+                except (ValueError, TypeError):
+                    pass  # fall through to full-sheet count
+
+            return sheet_data_rows or None
         except Exception:
             return None

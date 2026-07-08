@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpacerItem,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -80,6 +82,7 @@ class SettingsScreen(QWidget):
         content_layout.addWidget(self._build_pipeline_group())
         content_layout.addWidget(self._build_files_group())
         content_layout.addWidget(self._build_api_group())
+        content_layout.addWidget(self._build_row_range_group())
         content_layout.addSpacerItem(
             QSpacerItem(0, 16, QSizePolicy.Minimum, QSizePolicy.Fixed)
         )
@@ -235,6 +238,57 @@ class SettingsScreen(QWidget):
 
         return group
 
+    def _build_row_range_group(self) -> QGroupBox:
+        """Build the 'Row Range' settings group."""
+        group = QGroupBox("Row Range")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
+
+        # Radio buttons
+        self._radio_all = QRadioButton("Process all rows")
+        self._radio_all.setChecked(True)
+        self._radio_range = QRadioButton("Process a specific range")
+        layout.addWidget(self._radio_all)
+        layout.addWidget(self._radio_range)
+
+        # Spin boxes (shown beneath the range radio)
+        spin_row = QFormLayout()
+        spin_row.setContentsMargins(24, 4, 0, 0)
+        spin_row.setSpacing(8)
+
+        self._start_row_spin = QSpinBox()
+        self._start_row_spin.setMinimum(2)       # row 1 is always the header
+        self._start_row_spin.setMaximum(1_000_000)
+        self._start_row_spin.setValue(2)
+        self._start_row_spin.setFixedWidth(120)
+        self._start_row_spin.setEnabled(False)
+
+        self._end_row_spin = QSpinBox()
+        self._end_row_spin.setMinimum(2)
+        self._end_row_spin.setMaximum(1_000_000)
+        self._end_row_spin.setValue(100)
+        self._end_row_spin.setFixedWidth(120)
+        self._end_row_spin.setEnabled(False)
+
+        spin_row.addRow("Start row (1-indexed, excl. header):", self._start_row_spin)
+        spin_row.addRow("End row (inclusive):", self._end_row_spin)
+        layout.addLayout(spin_row)
+
+        note = QLabel(
+            "ⓘ  Row numbers are 1-indexed and include the header row "
+            "(so row 2 is the first data row). Leave on 'all' to process the "
+            "entire sheet."
+        )
+        note.setStyleSheet(f"color: {COLORS['text_disabled']}; font-size: 11px;")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        # Wire radio buttons to enable/disable spinboxes
+        self._radio_all.toggled.connect(self._on_mode_changed)
+        self._radio_range.toggled.connect(self._on_mode_changed)
+
+        return group
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -349,6 +403,12 @@ class SettingsScreen(QWidget):
             self._gemini_key_edit.setEchoMode(QLineEdit.Password)
             self._gemini_show_btn.setText("Show")
 
+    def _on_mode_changed(self) -> None:
+        """Enable/disable spinboxes depending on the selected radio button."""
+        is_range = self._radio_range.isChecked()
+        self._start_row_spin.setEnabled(is_range)
+        self._end_row_spin.setEnabled(is_range)
+
     def _on_save(self) -> None:
         """Validate, persist, and emit proceed."""
         s = self._collect_settings()
@@ -369,6 +429,14 @@ class SettingsScreen(QWidget):
     # ------------------------------------------------------------------
 
     def _collect_settings(self) -> Settings:
+        if self._radio_range.isChecked():
+            mode = "range"
+            start = str(self._start_row_spin.value())
+            end = str(self._end_row_spin.value())
+        else:
+            mode = "all"
+            start = ""
+            end = ""
         return Settings(
             pipeline_dir=self._pipeline_dir_edit.text().strip(),
             python_exe=self._python_exe_edit.text().strip() or "python",
@@ -376,9 +444,9 @@ class SettingsScreen(QWidget):
             sheet_name=self._sheet_combo.currentText().strip(),
             output_file=self._output_file_edit.text().strip(),
             gemini_api_key=self._gemini_key_edit.text().strip(),
-            process_mode=self._settings.process_mode,
-            start_row=self._settings.start_row,
-            end_row=self._settings.end_row,
+            process_mode=mode,
+            start_row=start,
+            end_row=end,
         )
 
     @staticmethod
@@ -398,6 +466,18 @@ class SettingsScreen(QWidget):
             errors.append("Sheet name is required.")
         if not s.output_file:
             errors.append("Output Excel file path is required.")
+        if not s.gemini_api_key:
+            errors.append("Gemini API key is required.")
+        if s.process_mode == "range":
+            try:
+                start = int(s.start_row)
+                end = int(s.end_row)
+                if start < 2:
+                    errors.append("Start row must be ≥ 2 (row 1 is the header).")
+                if end < start:
+                    errors.append("End row must be ≥ start row.")
+            except (ValueError, TypeError):
+                errors.append("Start and end row must be valid integers.")
         return errors
 
     def _populate_fields(self) -> None:
@@ -413,6 +493,22 @@ class SettingsScreen(QWidget):
                 self._load_sheet_names(s.input_file)
         if s.sheet_name:
             self._sheet_combo.setCurrentText(s.sheet_name)
+
+        # Restore row-range state
+        if s.process_mode == "range":
+            self._radio_range.setChecked(True)
+            if s.start_row:
+                try:
+                    self._start_row_spin.setValue(int(s.start_row))
+                except ValueError:
+                    pass
+            if s.end_row:
+                try:
+                    self._end_row_spin.setValue(int(s.end_row))
+                except ValueError:
+                    pass
+        else:
+            self._radio_all.setChecked(True)
 
     def refresh(self) -> None:
         """Reload from disk and repopulate — called when navigating back."""

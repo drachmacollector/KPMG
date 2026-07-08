@@ -32,6 +32,15 @@ LOGIN_PROMPT_MARKER = "Press ENTER here"
 #   logger.info(f"Acknowledgement: {ack_no}\n")
 ACK_LINE_RE = re.compile(r"Acknowledgement:\s*(\S+)")
 
+# Strip ANSI colour/style escape sequences (tqdm emits these; QPlainTextEdit
+# is not a terminal and would show them as literal garbage text).
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from *text*."""
+    return _ANSI_RE.sub("", text)
+
 
 class PipelineRunner(QThread):
     """
@@ -104,6 +113,8 @@ class PipelineRunner(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,   # merge stderr into stdout
                 text=True,
+                encoding="utf-8",           # explicit UTF-8 avoids cp1252 mojibake
+                errors="replace",           # never crash on undecodable bytes
                 bufsize=1,                  # line-buffered
             )
         except FileNotFoundError:
@@ -118,20 +129,56 @@ class PipelineRunner(QThread):
 
         self.process_started.emit(self._proc.pid)
 
-        # Read stdout line-by-line (blocks this QThread, not the GUI thread).
-        for raw_line in self._proc.stdout:
-            line = raw_line.rstrip("\n").rstrip("\r")
-            self.log_line.emit(line)
+        # ----------------------------------------------------------------
+        # Character-by-character stdout reader.
+        #
+        # Why not the simpler "for line in self._proc.stdout"?
+        # Python's file iterator only yields a line once it hits \n or EOF.
+        # The pipeline's  input("Press ENTER here …")  writes its prompt
+        # string WITHOUT a trailing newline — it just sits in the pipe
+        # buffer, the iterator never yields it, LOGIN_PROMPT_MARKER never
+        # fires, and the "Continue" button never appears.
+        #
+        # Reading one character at a time lets us check the growing buffer
+        # before a newline arrives, so we catch the input() prompt promptly.
+        # ----------------------------------------------------------------
+        buffer = ""
+        while True:
+            ch = self._proc.stdout.read(1)
+            if ch == "":          # EOF — subprocess closed stdout
+                break
+            buffer += ch
 
-            # Detect human-in-the-loop pause (emitted only once).
-            if not self._login_emitted and LOGIN_PROMPT_MARKER in line:
-                self._login_emitted = True
-                self.awaiting_login.emit()
+            if ch in ("\n", "\r"):
+                # Completed line — process and reset buffer.
+                line = buffer.rstrip("\r\n")
+                buffer = ""
+                if not line:
+                    continue
+                self.log_line.emit(_strip_ansi(line))
 
-            # Track per-claim progress via Acknowledgement: lines.
-            if ACK_LINE_RE.search(line):
-                self._claims_seen += 1
-                self.progress.emit(self._claims_seen)
+                # Detect human-in-the-loop pause (emitted only once).
+                if not self._login_emitted and LOGIN_PROMPT_MARKER in line:
+                    self._login_emitted = True
+                    self.awaiting_login.emit()
+
+                # Track per-claim progress via Acknowledgement: lines.
+                if ACK_LINE_RE.search(line):
+                    self._claims_seen += 1
+                    self.progress.emit(self._claims_seen)
+            else:
+                # No newline yet — check the in-progress buffer.
+                # input()'s prompt will never produce a newline, so this is
+                # the only way to catch LOGIN_PROMPT_MARKER in that case.
+                if not self._login_emitted and LOGIN_PROMPT_MARKER in buffer:
+                    self._login_emitted = True
+                    self.log_line.emit(_strip_ansi(buffer))
+                    self.awaiting_login.emit()
+                    buffer = ""   # consumed — don't re-emit when \n arrives
+
+        # Flush any partial line left in the buffer at EOF.
+        if buffer:
+            self.log_line.emit(_strip_ansi(buffer))
 
         returncode = self._proc.wait()
 
