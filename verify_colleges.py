@@ -15,13 +15,17 @@ from logger_config import logger
 from ocr_engine import ocr_image
 from extractor import extract_information, is_satisfactory
 from web_resolver import resolve_institution
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
-excel_file = "26673- Master Merged Data Final_01.03.2026.xlsx"
-target_sheet_name = "Test Data"
+excel_file = os.environ["MAHABOCW_INPUT_FILE"]
+target_sheet_name = os.environ["MAHABOCW_SHEET_NAME"]
+output_excel_file = os.environ["MAHABOCW_OUTPUT_FILE"]
 
 # Rows with accuracy below this threshold are flagged for manual review.
 # Adjust between 0 and 100 as needed.
@@ -31,7 +35,7 @@ ACCURACY_THRESHOLD = 80
 
 logger.debug("[*] Initializing MAHABOCW Verification Engine...")
 with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour="green") as pbar:
-    output_excel_file = "Test_Data_Medical_Claim_Data_Output.xlsx"
+    # output_excel_file is already read from environment variables above
     if os.path.exists(output_excel_file):
         excel_info = pd.ExcelFile(output_excel_file)
         logger.debug(f"Found existing output file. Sheets: {excel_info.sheet_names}")
@@ -592,7 +596,7 @@ with sync_playwright() as p:
     
                 save_with_retry(
                     df,
-                    "Test_Data_Medical_Claim_Data_Output.xlsx",
+                    output_excel_file,
                     target_sheet_name
                 )
     
@@ -609,9 +613,9 @@ with sync_playwright() as p:
 
 save_with_retry(
     df,
-    "Test_Data_Medical_Claim_Data_Output.xlsx",
+    output_excel_file,
     target_sheet_name
 )
 
 logger.debug("Done.")
-logger.debug("Output saved to Test_Data_Medical_Claim_Data_Output.xlsx")
+logger.debug(f"Output saved to {output_excel_file}")
