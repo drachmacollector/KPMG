@@ -362,7 +362,7 @@ class GeminiResolver:
         req = urllib.request.Request(
             "https://openrouter.ai/api/v1/chat/completions",
             data=json.dumps({
-                "model": "openrouter/free",
+                "model": "openrouter/auto",
                 "temperature": 0.0,
                 "response_format": {"type": "json_object"},
                 "messages": [
