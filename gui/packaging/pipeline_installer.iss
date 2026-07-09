@@ -156,7 +156,7 @@ begin
     MsgBox(
       'Python was not found on this machine.' + #13#10 + #13#10 +
       'Before running this installer, please:' + #13#10 +
-      '  1. Download Python 3.11 from https://www.python.org/downloads/' + #13#10 +
+      '  1. Download Python 3.12 or 3.13 from https://www.python.org/downloads/' + #13#10 +
       '  2. During installation, tick "Add Python to PATH"' + #13#10 +
       '  3. Re-run this installer once Python is installed.' + #13#10 + #13#10 +
       'Installation will now be cancelled.',
