@@ -33,7 +33,8 @@ gui/
 ├── packaging/
 │   ├── mahabocw_gui.spec        # PyInstaller spec file
 │   ├── version_info.txt         # Windows executable metadata
-│   └── installer.iss            # Inno Setup compilation script
+│   ├── installer.iss            # GUI Inno Setup script (MAHABOCW-GUI-Setup.exe)
+│   └── pipeline_installer.iss   # Pipeline Inno Setup script (MAHABOCW-Pipeline-Setup.exe)
 ├── requirements.txt             # Lightweight GUI dependencies (PySide6, psutil, openpyxl)
 └── README.md                    # Developer guide for the GUI
 ```
@@ -60,8 +61,33 @@ Located in `app/settings.py`. User settings are persisted as a JSON file in the 
 
 The app is packaged for Windows deployment to allow non-technical users to install and run it easily.
 
+There are **two independent installers**, both built from `gui/packaging/`:
+
+### 4a. GUI Installer (`MAHABOCW-GUI-Setup.exe`)
+
 1. **PyInstaller**: Configured via `packaging/mahabocw_gui.spec` to use `--onedir` mode (for faster startup and easy patchability) and `--noconsole` (to hide the background terminal window).
-2. **Inno Setup**: The `packaging/installer.iss` script bundles the PyInstaller output into a standard Windows Setup (`.exe`) file. It handles creating Start Menu and Desktop shortcuts and provides a seamless installation wizard.
+2. **Inno Setup** (`installer.iss`): Bundles the PyInstaller output into a standard Windows Setup `.exe`. Creates Start Menu and Desktop shortcuts. Copies `docs/SETUP_INSTRUCTIONS.md` directly from the repo root — no manual copy step required.
+
+### 4b. Pipeline Installer (`MAHABOCW-Pipeline-Setup.exe`)
+
+Built from `packaging/pipeline_installer.iss`. Its sole job is to silently place the pipeline and its dependencies on the client machine at a fixed, hidden location:
+
+- **Install location**: `C:\ProgramData\MAHABOCW\pipeline` (`{commonappdata}\MAHABOCW\pipeline` in Inno Setup). This is a system folder that non-technical users are unlikely to browse into casually.
+- **Files installed**: `verify_colleges.py`, `document_processor.py`, `extractor.py`, `ocr_engine.py`, `web_resolver.py`, `logger_config.py`, `requirements-lock-cpu.txt`. `institution_cache.json` is intentionally excluded so the client starts with a clean cache.
+- **Python pre-check**: A `[Code]` section runs `python --version` before install. If Python is not on PATH, a dialog instructs the user to install it and aborts cleanly.
+- **Silent dependency install**: Three `[Run]` steps (hidden, no terminal window) run `pip install --upgrade pip`, `pip install -r requirements-lock-cpu.txt`, and `playwright install chromium`. All output is appended to `install.log` at the install location for troubleshooting.
+- **Completion marker**: `.setup_complete` is written after all three steps, distinguishing a fully-installed state from a partial one.
+- **Known limitation**: pip-installed packages (site-packages) and the Playwright Chromium download are **not** removed on uninstall — Inno Setup only manages files it directly copied.
+
+The two installers are independent and can be run in either order.
+
+### 4c. Auto-detection in `settings.py`
+
+`settings.py` exports:
+- `PIPELINE_INSTALL_DIR = r"C:\ProgramData\MAHABOCW\pipeline"`
+- `default_pipeline_dir() -> str` — returns `PIPELINE_INSTALL_DIR` if `verify_colleges.py` exists there, else `""`.
+
+`Settings.load()` calls `default_pipeline_dir()` when `pipeline_dir` is empty (fresh install, no `settings.json` yet). This pre-fills the Pipeline Folder on the Settings screen without requiring the user to Browse — the client never sees a `.py` filename or needs to navigate to a source folder.
 
 ## 5. Security & Isolation
 

@@ -1,7 +1,7 @@
 # MAHABOCW Verification Tool — Setup Instructions
 
 Follow these steps once, in order, before using the MAHABOCW Verification Tool for
-the first time. After this one-time setup, you'll only ever need step 6.
+the first time. After this one-time setup, you'll only ever need step 4.
 
 ## Prerequisites
 
@@ -9,46 +9,32 @@ the first time. After this one-time setup, you'll only ever need step 6.
 - At least 16 GB of RAM recommended (the tool runs a local AI model)
 - A stable internet connection during setup and during each run
 - Your Gemini API key (ask whoever provided this tool if you don't have one yet)
+- **Python 3.11** installed with "Add Python to PATH" checked
+  (download from https://www.python.org/downloads/ — the pipeline's
+  `requirements-lock-cpu.txt` was generated with Python 3.11.9; a different major
+  version may cause package incompatibilities)
 
-## Step 1 — Install Python
+## Step 1 — Install the pipeline
 
-Download and install **Python 3.11** from https://www.python.org/downloads/
-(the pipeline's `requirements-lock.txt` was generated with Python 3.11.9 — using a different major
-version may cause package incompatibilities).
-During installation, make sure to check **"Add Python to PATH"**.
+Run **MAHABOCW-Pipeline-Setup.exe** (provided alongside this document) and follow
+the on-screen prompts.
 
-## Step 2 — Install the pipeline's Python packages
+The installer will:
+- Place the pipeline files in a system folder (`C:\ProgramData\MAHABOCW\pipeline`)
+  that you never need to browse into.
+- Silently install all required Python packages (this takes several minutes —
+  the wizard progress bar will be active; no terminal window appears).
+- Download the self-contained Chromium browser component (~300 MB) used to
+  navigate the MAHABOCW portal.
 
-Open a Command Prompt in the folder where the pipeline files were placed
-(the folder containing `verify_colleges.py`) and run:
+A log file is written to `C:\ProgramData\MAHABOCW\pipeline\install.log`. If anything
+goes wrong during installation, share that file when asking for help.
 
-```
-pip install -r requirements-lock.txt
-```
+> **If you see a message that Python was not found:** install Python 3.11 from
+> https://www.python.org/downloads/ (tick "Add Python to PATH"), then re-run
+> MAHABOCW-Pipeline-Setup.exe.
 
-This will take several minutes — it downloads a number of large packages.
-
-**If you see errors mentioning CUDA, cuDNN, or NVIDIA:** your computer likely
-doesn't have a compatible graphics card. Run these two commands instead, then
-retry the install:
-
-```
-pip uninstall paddlepaddle-gpu
-pip install paddlepaddle
-```
-
-## Step 3 — Install the browser automation component
-
-In the same Command Prompt, run:
-
-```
-playwright install chromium
-```
-
-This downloads a self-contained Chromium browser (roughly 300 MB) used to
-navigate the MAHABOCW portal.
-
-## Step 4 — Install and set up the local AI model
+## Step 2 — Install and set up the local AI model
 
 1. Download and install Ollama from https://ollama.com/download
 2. Once installed, open a new Command Prompt and run:
@@ -58,23 +44,24 @@ navigate the MAHABOCW portal.
    This downloads roughly 4.7 GB and may take a while depending on your
    internet connection. Let it finish completely before continuing.
 
-## Step 5 — Install the MAHABOCW Verification Tool
+## Step 3 — Install the MAHABOCW Verification Tool
 
 Run the installer (`MAHABOCW-GUI-Setup.exe`) provided alongside this document,
 and follow the on-screen prompts. A shortcut will be created on your Desktop
 and in your Start Menu.
 
-## Step 6 — Configure and run
+## Step 4 — Configure and run
 
 1. Launch **MAHABOCW Verification Tool** from the Desktop or Start Menu.
 2. On the Settings screen, fill in:
-   - **Pipeline Folder** — the folder from Step 2 (containing `verify_colleges.py`)
-   - **Python Interpreter** — leave as `python` unless Step 1 didn't add it to
-     PATH, in which case browse to your `python.exe` directly
+   - **Pipeline Folder** — automatically pre-filled if Step 1 completed
+     successfully; if it is blank, browse to `C:\ProgramData\MAHABOCW\pipeline`
    - **Input Excel File** — the claims spreadsheet you want to process
    - **Sheet Name** — select from the dropdown once the input file is chosen
    - **Output Excel File** — where the corrected results should be saved
    - **Gemini API Key** — paste your key here
+   - **Python Interpreter** — leave as `python` unless Python was not added to
+     PATH, in which case browse to your `python.exe` directly
 3. Click **Save & Continue**, then click **Start**.
 4. A browser window will open automatically. Log into the MAHABOCW portal in
    that window (including any captcha), click the **Claims** section, bring
@@ -92,7 +79,9 @@ and in your Start Menu.
 | Problem | What to do |
 |---|---|
 | "Output Excel file is currently open" keeps appearing in the log | Close the output file if you have it open in Excel, then wait — the tool retries automatically every few seconds. |
-| The browser window doesn't open | Make sure Step 3 completed successfully; try running `playwright install chromium` again. |
-| A message about the AI model or Ollama appears | Make sure Ollama is installed and that `ollama pull qwen2.5:7b-instruct` finished completely (Step 4). |
+| The browser window doesn't open | Make sure Step 1 completed successfully; check `C:\ProgramData\MAHABOCW\pipeline\install.log` for errors and re-run MAHABOCW-Pipeline-Setup.exe if needed. |
+| A message about the AI model or Ollama appears | Make sure Ollama is installed and that `ollama pull qwen2.5:7b-instruct` finished completely (Step 2). |
+| Pipeline Folder field is blank after first launch | Browse to `C:\ProgramData\MAHABOCW\pipeline` — this means Step 1 was not yet completed or verify_colleges.py is missing from that folder. |
+| pip install failed / package errors | Open `C:\ProgramData\MAHABOCW\pipeline\install.log`, look for the failing package, and share that file when asking for help. |
 | The tool won't start / interpreter errors | Use the **Test** button next to the Python Interpreter field in Settings to confirm the path is correct. |
 | Something else goes wrong mid-run | Click **Open Latest Log File** on the completion screen (or check the `logs` folder inside the pipeline folder) for full details, and share that file when asking for help. |

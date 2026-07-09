@@ -142,7 +142,8 @@ class SettingsScreen(QWidget):
         layout.addWidget(self._section_label("Pipeline Folder"))
         row1 = QHBoxLayout()
         self._pipeline_dir_edit = self._line_edit("Path to the folder containing verify_colleges.py")
-        self._pipeline_dir_edit.setReadOnly(True)
+        # Not set to read-only: auto-detected value is pre-filled but the user
+        # can still type or browse to a different folder (e.g. for dev/testing).
         self._pipeline_dir_browse = self._browse_btn()
         self._pipeline_dir_browse.clicked.connect(self._browse_pipeline_dir)
         row1.addWidget(self._pipeline_dir_edit)

@@ -53,7 +53,8 @@ gui/
 ├── packaging/
 │   ├── mahabocw_gui.spec    # PyInstaller build spec
 │   ├── version_info.txt     # Windows version resource
-│   └── installer.iss        # Inno Setup installer script
+│   ├── installer.iss        # GUI Inno Setup installer script (MAHABOCW-GUI-Setup.exe)
+│   └── pipeline_installer.iss  # Pipeline Inno Setup installer (MAHABOCW-Pipeline-Setup.exe)
 ├── requirements.txt         # PySide6, psutil, openpyxl only
 └── README.md                # This file
 ```
@@ -64,6 +65,12 @@ gui/
 
 Settings are stored in `%APPDATA%\MAHABOCW-GUI\settings.json`.  
 The file is never written inside the pipeline repo directory.
+
+`settings.py` also exports `default_pipeline_dir()` which returns
+`C:\ProgramData\MAHABOCW\pipeline` if `verify_colleges.py` is present there,
+or `""` otherwise. `Settings.load()` calls this automatically when `pipeline_dir`
+is empty, so the Settings screen is pre-filled after `MAHABOCW-Pipeline-Setup.exe`
+has been run — the user never needs to click Browse for that field on a fresh install.
 
 ---
 
@@ -89,11 +96,27 @@ pyinstaller packaging/mahabocw_gui.spec
 
 Place a 256×256 `.ico` file at `gui/app/resources/icon.ico`.
 
-### 4. Build the Inno Setup installer
+### 4. Build the Inno Setup installers
 
+There are two independent installer scripts:
+
+**GUI installer** (`installer.iss`) → `MAHABOCW-GUI-Setup.exe`
 1. Open `gui/packaging/installer.iss` in **Inno Setup Compiler** and click **Build**.
    (`installer.iss` references `docs/SETUP_INSTRUCTIONS.md` at the repo root directly — no manual copy needed.)
 2. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
+
+**Pipeline installer** (`pipeline_installer.iss`) → `MAHABOCW-Pipeline-Setup.exe`
+1. Open `gui/packaging/pipeline_installer.iss` in **Inno Setup Compiler** and click **Build**.
+   Source files are referenced two levels up from the script (the repo root), so the
+   `.py` files and `requirements-lock-cpu.txt` must be present there.
+2. Output: `gui/packaging/Output/MAHABOCW-Pipeline-Setup.exe`.
+3. Running the resulting `.exe` on a client machine:
+   - Verifies Python is on PATH (aborts with a clear message if not).
+   - Copies the pipeline `.py` files to `C:\ProgramData\MAHABOCW\pipeline`.
+   - Silently runs `pip install -r requirements-lock-cpu.txt` and
+     `playwright install chromium` (no terminal window shown to the user).
+   - All pip/playwright output is logged to
+     `C:\ProgramData\MAHABOCW\pipeline\install.log`.
 
 ---
 

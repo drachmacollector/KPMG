@@ -19,6 +19,22 @@ CONFIG_DIR: str = os.path.join(
 )
 CONFIG_PATH: str = os.path.join(CONFIG_DIR, "settings.json")
 
+# Fixed install location written by MAHABOCW-Pipeline-Setup.exe.
+# C:\ProgramData is {commonappdata} in Inno Setup — a system folder that
+# non-technical users are unlikely to browse into casually.
+PIPELINE_INSTALL_DIR: str = r"C:\ProgramData\MAHABOCW\pipeline"
+
+
+def default_pipeline_dir() -> str:
+    """Return the standard pipeline install path if verify_colleges.py is there.
+
+    Used by Settings.load() to pre-fill the Pipeline Folder on first launch
+    after MAHABOCW-Pipeline-Setup.exe has been run.  Returns "" if the
+    pipeline has not been installed at the expected location.
+    """
+    sentinel = os.path.join(PIPELINE_INSTALL_DIR, "verify_colleges.py")
+    return PIPELINE_INSTALL_DIR if os.path.isfile(sentinel) else ""
+
 
 @dataclass
 class Settings:
@@ -52,7 +68,14 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
-        """Load settings from JSON, or return defaults if file missing/corrupt."""
+        """Load settings from JSON, or return defaults if file missing/corrupt.
+
+        If pipeline_dir is empty after loading (either because settings.json
+        doesn't exist yet or the field was never filled in), fall back to
+        default_pipeline_dir() so the Settings screen is pre-filled when
+        MAHABOCW-Pipeline-Setup.exe has already been run.
+        """
+        instance: "Settings"
         if os.path.exists(CONFIG_PATH):
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
@@ -60,10 +83,18 @@ class Settings:
                 # Forward-compat: ignore unknown keys, fill missing keys with defaults.
                 valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
                 filtered = {k: v for k, v in data.items() if k in valid_keys}
-                return cls(**filtered)
+                instance = cls(**filtered)
             except (json.JSONDecodeError, TypeError):
-                pass
-        return cls()
+                instance = cls()
+        else:
+            instance = cls()
+
+        # Auto-detect the standard pipeline location if no dir is configured.
+        # This pre-fills the Settings screen without requiring the user to Browse.
+        if not instance.pipeline_dir:
+            instance.pipeline_dir = default_pipeline_dir()
+
+        return instance
 
     def is_runnable(self) -> bool:
         """Return True when minimum required fields are filled in."""
