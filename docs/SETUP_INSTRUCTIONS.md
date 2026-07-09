@@ -12,8 +12,9 @@ the first time. After this one-time setup, you'll only ever need step 6.
 
 ## Step 1 — Install Python
 
-Download and install Python from https://www.python.org/downloads/ (get the same
-major version noted in `requirements-lock.txt`, provided alongside this document).
+Download and install **Python 3.11** from https://www.python.org/downloads/
+(the pipeline's `requirements-lock.txt` was generated with Python 3.11.9 — using a different major
+version may cause package incompatibilities).
 During installation, make sure to check **"Add Python to PATH"**.
 
 ## Step 2 — Install the pipeline's Python packages

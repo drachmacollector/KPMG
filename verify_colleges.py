@@ -429,7 +429,12 @@ with sync_playwright() as p:
     if process_all:
         rows_to_process = df
     else:
-        rows_to_process = df.iloc[start_row:end_row]
+        # GUI spinboxes emit 1-indexed spreadsheet row numbers (min=2 = first
+        # data row).  pd.read_excel strips the header, so df.iloc[0] maps to
+        # spreadsheet row 2.  Convert: spreadsheet_row → df_index = row - 2.
+        # The end bound is exclusive in iloc, so end_row - 1 gives the correct
+        # inclusive upper limit (spreadsheet row N → df.iloc[N-2]).
+        rows_to_process = df.iloc[start_row - 2 : end_row - 1]
     
     with tqdm(
         total=len(rows_to_process),

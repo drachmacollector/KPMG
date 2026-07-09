@@ -8,7 +8,7 @@ For the pipeline itself, see the root-level `README.md` on `main`.
 ## Branch context
 
 This code lives on the `desktop-app` branch.  
-Pipeline files (`verify_colleges.py`, `extractor.py`, etc.) are present at the **repo root** but must never be modified on this branch — see [the implementation plan](../docs/MAHABOCW_GUI_Implementation_Plan.md) for the full rationale.
+Pipeline files (`verify_colleges.py`, `extractor.py`, etc.) are present at the **repo root** but must never be modified on this branch — see [ARCHITECTURE.md](../docs/ARCHITECTURE.md) for the full rationale.
 
 ---
 
@@ -91,9 +91,9 @@ Place a 256×256 `.ico` file at `gui/app/resources/icon.ico`.
 
 ### 4. Build the Inno Setup installer
 
-1. Copy `SETUP_INSTRUCTIONS.md` (the client checklist from Section 7 of the plan) into `gui/packaging/`.
-2. Open `gui/packaging/installer.iss` in **Inno Setup Compiler** and click **Build**.
-3. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
+1. Open `gui/packaging/installer.iss` in **Inno Setup Compiler** and click **Build**.
+   (`installer.iss` references `docs/SETUP_INSTRUCTIONS.md` at the repo root directly — no manual copy needed.)
+2. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
 
 ---
 

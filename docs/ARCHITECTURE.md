@@ -35,8 +35,7 @@ gui/
 │   ├── version_info.txt         # Windows executable metadata
 │   └── installer.iss            # Inno Setup compilation script
 ├── requirements.txt             # Lightweight GUI dependencies (PySide6, psutil, openpyxl)
-├── README.md                    # Developer guide for the GUI
-└── test_runner_standalone.py    # Smoke test for the runner without UI
+└── README.md                    # Developer guide for the GUI
 ```
 
 ## 3. Component Details
@@ -55,7 +54,7 @@ Controlled by a `QStackedWidget` hosted in `MainWindow` for seamless transitions
 3. **DoneScreen**: Shown when the pipeline finishes. Provides buttons to easily open the generated output Excel file, the latest log file, or start a new run.
 
 ### Settings Persistence
-Located in `app/settings.py`. User settings are persisted as a JSON file in the user's `%APPDATA%\MAHABOCW_GUI` directory. Unknown keys are ignored during load to ensure forward compatibility with future configuration updates.
+Located in `app/settings.py`. User settings are persisted as a JSON file in the user's `%APPDATA%\MAHABOCW-GUI` directory (hyphen, matching the `CONFIG_DIR` constant in `settings.py`). Unknown keys are ignored during load to ensure forward compatibility with future configuration updates.
 
 ## 4. Packaging and Distribution
 

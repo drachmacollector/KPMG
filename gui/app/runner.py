@@ -228,11 +228,22 @@ class PipelineRunner(QThread):
         """
         Request cancellation.  Sets the flag first so the finished_error
         signal carries the 'cancelled' message rather than the raw exit code.
+
+        Playwright's Chromium runs as a child process of the pipeline's
+        python.exe.  Terminating just the parent abruptly (instead of letting
+        the ``with sync_playwright()`` block exit normally) leaves an orphaned
+        chrome.exe behind.  Kill the full process tree to avoid accumulating
+        zombie browser processes across cancel/resume sessions.
         """
         self._cancel_requested = True
         if self._proc:
             try:
-                psutil.Process(self._proc.pid).terminate()
+                parent = psutil.Process(self._proc.pid)
+                children = parent.children(recursive=True)
+                for child in children:
+                    child.terminate()
+                parent.terminate()
+                psutil.wait_procs(children, timeout=3)
             except psutil.Error:
                 pass
 

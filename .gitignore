@@ -35,6 +35,9 @@ test_web_resolver_new.py
 test_runner_standalone.py
 
 # Added by user
-requirements.txt
+# Anchor to repo root only — gui/requirements.txt must stay tracked
+/requirements.txt
 logs/
+# Runtime-mutating cache — do not ship dev cache to clients on fresh clone
+institution_cache.json
 MAHABOCW_GUI_Implementation_Plan.md

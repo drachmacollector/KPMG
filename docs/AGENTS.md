@@ -32,7 +32,8 @@ This repo treats documentation as part of the change, not an afterthought:
 | `extractor.py` | Ollama/Qwen document classification + structured extraction. |
 | `web_resolver.py` | Institution resolution: cache → Gemini (native search grounding) → OpenRouter fallback. |
 
-Untracked/local-only (gitignored): `requirements.txt`, `logger_config.py`, `.env`, `institution_cache.json`, `downloads/`, `logs/`, `testing/`.
+Untracked/local-only (gitignored): `.env`, `downloads/`, `logs/`, `testing/`, `institution_cache.json`.
+Note: `institution_cache.json` is a runtime-mutating file (added to `.gitignore` to avoid shipping the dev cache as the client's starting state). `logger_config.py` is tracked in the repo.
 
 ## Conventions and constraints to respect
 
