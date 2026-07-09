@@ -11,7 +11,7 @@
 AppName=MAHABOCW Verification Tool
 AppVersion=1.0.0
 AppPublisher=KPMG
-AppPublisherURL=https://kpmg.com
+AppPublisherURL=https://kpmg.com/in/en/services/advisory/consulting/government-and-public-services.html
 DefaultDirName={autopf}\MAHABOCW
 DefaultGroupName=MAHABOCW
 OutputDir=Output

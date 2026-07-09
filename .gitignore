@@ -19,6 +19,7 @@ test_data_output.xlsx
 /testing/
 dist
 build
+Output
 
 # Python
 __pycache__/
