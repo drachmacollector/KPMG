@@ -17,6 +17,8 @@ test_data_output.xlsx
 /samples/
 /test/
 /testing/
+dist
+build
 
 # Python
 __pycache__/
