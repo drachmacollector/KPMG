@@ -12,12 +12,13 @@ import subprocess
 from typing import Optional
 
 import openpyxl
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -41,8 +42,7 @@ class SettingsScreen(QWidget):
     """
     Settings configuration screen.
 
-    Emits `proceed` when the user clicks Save & Continue with valid settings.
-    The main window connects this signal to navigate to the run screen.
+    Emits `proceed` when the user saves Settings and clicks Continue.
     """
 
     proceed = Signal(Settings)
@@ -50,8 +50,10 @@ class SettingsScreen(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._settings = Settings.load()
+        self._glow_state = True
         self._setup_ui()
         self._populate_fields()
+        self._start_button_pulse()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -61,6 +63,15 @@ class SettingsScreen(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Accent top bar
+        top_bar = QFrame()
+        top_bar.setFixedHeight(3)
+        top_bar.setStyleSheet(
+            f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {COLORS['accent']}, stop:0.5 {COLORS['accent_hover']}, stop:1 #c7d2fe);"
+        )
+        root.addWidget(top_bar)
 
         # Header
         header = self._build_header()
@@ -75,8 +86,8 @@ class SettingsScreen(QWidget):
         content_widget = QWidget()
         content_widget.setStyleSheet(f"background: {COLORS['bg_base']};")
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(40, 32, 40, 32)
-        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(44, 28, 44, 36)
+        content_layout.setSpacing(18)
 
         # --- Groups ---
         content_layout.addWidget(self._build_pipeline_group())
@@ -84,16 +95,16 @@ class SettingsScreen(QWidget):
         content_layout.addWidget(self._build_api_group())
         content_layout.addWidget(self._build_row_range_group())
         content_layout.addSpacerItem(
-            QSpacerItem(0, 16, QSizePolicy.Minimum, QSizePolicy.Fixed)
+            QSpacerItem(0, 8, QSizePolicy.Minimum, QSizePolicy.Fixed)
         )
 
-        # Save button
+        # Save button row
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self._save_btn = QPushButton("Save & Continue →")
-        self._save_btn.setObjectName("primary")
-        self._save_btn.setMinimumWidth(200)
-        self._save_btn.setFixedHeight(42)
+        self._save_btn = QPushButton("Save & Continue  →")
+        self._save_btn.setObjectName("primary_glow")
+        self._save_btn.setMinimumWidth(220)
+        self._save_btn.setFixedHeight(44)
         self._save_btn.setCursor(Qt.PointingHandCursor)
         self._save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(self._save_btn)
@@ -104,20 +115,28 @@ class SettingsScreen(QWidget):
 
     def _build_header(self) -> QWidget:
         header = QWidget()
-        header.setFixedHeight(80)
+        header.setFixedHeight(88)
         header.setStyleSheet(
             f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             f"stop:0 {COLORS['bg_deep']}, stop:1 {COLORS['bg_surface']});"
             f"border-bottom: 1px solid {COLORS['border']};"
         )
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(40, 16, 40, 16)
+        layout.setContentsMargins(44, 18, 44, 18)
+
+        # Left: step indicator stripe + title
+        stripe = QFrame()
+        stripe.setObjectName("accent_stripe")
+        stripe.setFixedWidth(3)
+        stripe.setFixedHeight(44)
+        layout.addWidget(stripe)
+        layout.addSpacing(14)
 
         title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-        title = QLabel("Settings")
+        title_col.setSpacing(3)
+        title = QLabel("Configuration")
         title.setObjectName("heading")
-        sub = QLabel("Configure your pipeline before starting a run")
+        sub = QLabel("Set up your pipeline before starting a run")
         sub.setObjectName("subheading")
         title_col.addWidget(title)
         title_col.addWidget(sub)
@@ -125,42 +144,41 @@ class SettingsScreen(QWidget):
         layout.addStretch()
 
         badge = QLabel("Step 1 of 2")
-        badge.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 12px; "
-            f"background: {COLORS['bg_elevated']}; border-radius: 10px; "
-            f"padding: 4px 12px; border: 1px solid {COLORS['border']};"
-        )
+        badge.setObjectName("pill")
         layout.addWidget(badge)
         return header
 
     def _build_pipeline_group(self) -> QGroupBox:
         group = QGroupBox("Pipeline")
         layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         # Pipeline folder
         layout.addWidget(self._section_label("Pipeline Folder"))
         row1 = QHBoxLayout()
+        row1.setSpacing(8)
         self._pipeline_dir_edit = self._line_edit("Path to the folder containing verify_colleges.py")
-        # Not set to read-only: auto-detected value is pre-filled but the user
-        # can still type or browse to a different folder (e.g. for dev/testing).
-        self._pipeline_dir_browse = self._browse_btn()
+        self._pipeline_dir_browse = self._browse_btn("Browse…")
         self._pipeline_dir_browse.clicked.connect(self._browse_pipeline_dir)
         row1.addWidget(self._pipeline_dir_edit)
         row1.addWidget(self._pipeline_dir_browse)
         layout.addLayout(row1)
 
+        layout.addSpacing(4)
+
         # Python interpreter
         layout.addWidget(self._section_label("Python Interpreter"))
         row2 = QHBoxLayout()
+        row2.setSpacing(8)
         self._python_exe_edit = self._line_edit('e.g. "python" or full path to python.exe')
-        self._python_browse = self._browse_btn()
+        self._python_browse = self._browse_btn("Browse…")
         self._python_browse.clicked.connect(self._browse_python)
         self._python_test_btn = QPushButton("Test")
         self._python_test_btn.setObjectName("ghost")
-        self._python_test_btn.setFixedWidth(60)
-        self._python_test_btn.setFixedHeight(34)
+        self._python_test_btn.setFixedWidth(64)
+        self._python_test_btn.setFixedHeight(36)
         self._python_test_btn.setCursor(Qt.PointingHandCursor)
+        self._python_test_btn.setToolTip("Test the selected Python interpreter")
         self._python_test_btn.clicked.connect(self._test_python)
         row2.addWidget(self._python_exe_edit)
         row2.addWidget(self._python_browse)
@@ -168,7 +186,9 @@ class SettingsScreen(QWidget):
         layout.addLayout(row2)
 
         self._python_version_label = QLabel("")
-        self._python_version_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; padding-left: 4px;")
+        self._python_version_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; padding-left: 2px;"
+        )
         layout.addWidget(self._python_version_label)
 
         return group
@@ -176,20 +196,23 @@ class SettingsScreen(QWidget):
     def _build_files_group(self) -> QGroupBox:
         group = QGroupBox("Files")
         layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         # Input Excel
         layout.addWidget(self._section_label("Input Excel File"))
         row1 = QHBoxLayout()
+        row1.setSpacing(8)
         self._input_file_edit = self._line_edit("Select .xlsx input file")
         self._input_file_edit.setReadOnly(True)
-        btn = self._browse_btn()
+        btn = self._browse_btn("Browse…")
         btn.clicked.connect(self._browse_input_file)
         row1.addWidget(self._input_file_edit)
         row1.addWidget(btn)
         layout.addLayout(row1)
 
-        # Sheet name (dropdown, populated when a file is chosen)
+        layout.addSpacing(4)
+
+        # Sheet name
         layout.addWidget(self._section_label("Sheet Name"))
         self._sheet_combo = QComboBox()
         self._sheet_combo.setEditable(True)
@@ -197,12 +220,15 @@ class SettingsScreen(QWidget):
         self._sheet_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self._sheet_combo)
 
+        layout.addSpacing(4)
+
         # Output Excel
         layout.addWidget(self._section_label("Output Excel File"))
         row2 = QHBoxLayout()
+        row2.setSpacing(8)
         self._output_file_edit = self._line_edit("Select or create output .xlsx file")
         self._output_file_edit.setReadOnly(True)
-        btn2 = self._browse_btn("Save As...")
+        btn2 = self._browse_btn("Save As…")
         btn2.clicked.connect(self._browse_output_file)
         row2.addWidget(self._output_file_edit)
         row2.addWidget(btn2)
@@ -213,18 +239,19 @@ class SettingsScreen(QWidget):
     def _build_api_group(self) -> QGroupBox:
         group = QGroupBox("API Credentials")
         layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         layout.addWidget(self._section_label("Gemini API Key"))
         key_row = QHBoxLayout()
+        key_row.setSpacing(8)
         self._gemini_key_edit = QLineEdit()
         self._gemini_key_edit.setEchoMode(QLineEdit.Password)
         self._gemini_key_edit.setPlaceholderText("Paste your Gemini API key here")
         self._gemini_key_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._gemini_show_btn = QPushButton("Show")
         self._gemini_show_btn.setObjectName("ghost")
-        self._gemini_show_btn.setFixedWidth(56)
-        self._gemini_show_btn.setFixedHeight(34)
+        self._gemini_show_btn.setFixedWidth(60)
+        self._gemini_show_btn.setFixedHeight(36)
         self._gemini_show_btn.setCursor(Qt.PointingHandCursor)
         self._gemini_show_btn.setCheckable(True)
         self._gemini_show_btn.toggled.connect(self._toggle_key_visibility)
@@ -246,7 +273,7 @@ class SettingsScreen(QWidget):
         """Build the 'Row Range' settings group."""
         group = QGroupBox("Row Range")
         layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         # Radio buttons
         self._radio_all = QRadioButton("Process all rows")
@@ -255,23 +282,23 @@ class SettingsScreen(QWidget):
         layout.addWidget(self._radio_all)
         layout.addWidget(self._radio_range)
 
-        # Spin boxes (shown beneath the range radio)
+        # Spin boxes
         spin_row = QFormLayout()
-        spin_row.setContentsMargins(24, 4, 0, 0)
+        spin_row.setContentsMargins(26, 4, 0, 0)
         spin_row.setSpacing(8)
 
         self._start_row_spin = QSpinBox()
-        self._start_row_spin.setMinimum(2)       # row 1 is always the header
+        self._start_row_spin.setMinimum(2)
         self._start_row_spin.setMaximum(1_000_000)
         self._start_row_spin.setValue(2)
-        self._start_row_spin.setFixedWidth(120)
+        self._start_row_spin.setFixedWidth(128)
         self._start_row_spin.setEnabled(False)
 
         self._end_row_spin = QSpinBox()
         self._end_row_spin.setMinimum(2)
         self._end_row_spin.setMaximum(1_000_000)
         self._end_row_spin.setValue(100)
-        self._end_row_spin.setFixedWidth(120)
+        self._end_row_spin.setFixedWidth(128)
         self._end_row_spin.setEnabled(False)
 
         spin_row.addRow("Start row (1-indexed, excl. header):", self._start_row_spin)
@@ -280,14 +307,12 @@ class SettingsScreen(QWidget):
 
         note = QLabel(
             "ⓘ  Row numbers are 1-indexed and include the header row "
-            "(so row 2 is the first data row). Leave on 'all' to process the "
-            "entire sheet."
+            "(row 2 is the first data row). Leave on 'all' to process the entire sheet."
         )
         note.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        # Wire radio buttons to enable/disable spinboxes
         self._radio_all.toggled.connect(self._on_mode_changed)
         self._radio_range.toggled.connect(self._on_mode_changed)
 
@@ -311,12 +336,29 @@ class SettingsScreen(QWidget):
         return edit
 
     @staticmethod
-    def _browse_btn(label: str = "Browse...") -> QPushButton:
+    def _browse_btn(label: str = "Browse…") -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedWidth(90)
-        btn.setFixedHeight(34)
+        btn.setFixedWidth(96)
+        btn.setFixedHeight(36)
         btn.setCursor(Qt.PointingHandCursor)
         return btn
+
+    # ------------------------------------------------------------------
+    # Button pulse animation
+    # ------------------------------------------------------------------
+
+    def _start_button_pulse(self) -> None:
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(900)
+        self._pulse_timer.timeout.connect(self._toggle_button_glow)
+        self._pulse_timer.start()
+
+    def _toggle_button_glow(self) -> None:
+        self._glow_state = not self._glow_state
+        name = "primary_glow" if self._glow_state else "primary_glow_dim"
+        self._save_btn.setObjectName(name)
+        self._save_btn.style().unpolish(self._save_btn)
+        self._save_btn.style().polish(self._save_btn)
 
     # ------------------------------------------------------------------
     # Slots
@@ -324,9 +366,7 @@ class SettingsScreen(QWidget):
 
     def _browse_pipeline_dir(self) -> None:
         current = self._pipeline_dir_edit.text() or os.path.expanduser("~")
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Pipeline Folder", current
-        )
+        path = QFileDialog.getExistingDirectory(self, "Select Pipeline Folder", current)
         if path:
             self._pipeline_dir_edit.setText(path)
 
@@ -347,20 +387,20 @@ class SettingsScreen(QWidget):
                 text=True,
                 timeout=10,
             )
-            version = (result.stdout.strip() or result.stderr.strip())
+            version = result.stdout.strip() or result.stderr.strip()
             self._python_version_label.setText(f"✓  {version}")
             self._python_version_label.setStyleSheet(
-                f"color: {COLORS['success']}; font-size: 11px; padding-left: 4px;"
+                f"color: {COLORS['success']}; font-size: 12px; padding-left: 2px;"
             )
         except FileNotFoundError:
             self._python_version_label.setText(f"✗  Interpreter not found: {exe}")
             self._python_version_label.setStyleSheet(
-                f"color: {COLORS['error']}; font-size: 11px; padding-left: 4px;"
+                f"color: {COLORS['error']}; font-size: 12px; padding-left: 2px;"
             )
         except subprocess.TimeoutExpired:
             self._python_version_label.setText("✗  Timed out")
             self._python_version_label.setStyleSheet(
-                f"color: {COLORS['error']}; font-size: 11px; padding-left: 4px;"
+                f"color: {COLORS['error']}; font-size: 12px; padding-left: 2px;"
             )
 
     def _browse_input_file(self) -> None:
@@ -381,7 +421,6 @@ class SettingsScreen(QWidget):
             self._sheet_combo.clear()
             self._sheet_combo.addItems(sheets)
             if sheets:
-                # Pre-select the sheet that was previously saved, if present.
                 saved = self._settings.sheet_name
                 if saved in sheets:
                     self._sheet_combo.setCurrentText(saved)
@@ -499,7 +538,6 @@ class SettingsScreen(QWidget):
         if s.sheet_name:
             self._sheet_combo.setCurrentText(s.sheet_name)
 
-        # Restore row-range state
         if s.process_mode == "range":
             self._radio_range.setChecked(True)
             if s.start_row:

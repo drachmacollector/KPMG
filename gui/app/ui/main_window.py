@@ -1,18 +1,20 @@
 """
 app/ui/main_window.py
 
-QMainWindow — the top-level window that hosts the three-screen QStackedWidget.
+QMainWindow — the top-level window that hosts the four-screen QStackedWidget.
 
 Screen indices:
-    0 — SettingsScreen
-    1 — RunScreen
-    2 — DoneScreen
+    0 — SplashScreen
+    1 — SettingsScreen
+    2 — RunScreen
+    3 — DoneScreen
 
 Navigation flow:
-    Settings ──[Save & Continue]──▶ Run
-    Run ──────[⚙ Settings]────────▶ Settings
-    Run ──────[finished_ok]────────▶ Done
-    Done ─────[Run Again]──────────▶ Run
+    Splash ────[Launch]────────────▶ Settings
+    Settings ──[Save & Continue]───▶ Run
+    Run ───────[⚙ Settings]────────▶ Settings
+    Run ───────[finished_ok]────────▶ Done
+    Done ──────[Run Again]──────────▶ Run
 """
 from __future__ import annotations
 
@@ -30,14 +32,16 @@ from PySide6.QtWidgets import (
 )
 
 from app.settings import Settings
+from app.ui.splash_screen import SplashScreen
 from app.ui.settings_screen import SettingsScreen
 from app.ui.run_screen import RunScreen
 from app.ui.done_screen import DoneScreen
 
 # Screen index constants
-IDX_SETTINGS = 0
-IDX_RUN = 1
-IDX_DONE = 2
+IDX_SPLASH   = 0
+IDX_SETTINGS = 1
+IDX_RUN      = 2
+IDX_DONE     = 3
 
 
 class MainWindow(QMainWindow):
@@ -45,7 +49,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, icon_path: Optional[str] = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("MAHABOCW Verification Tool")
+        self.setWindowTitle("MahaBOCW Verification Tool")
         self.setMinimumSize(1000, 680)
         self.resize(1100, 750)
 
@@ -55,22 +59,27 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
+        self._splash_screen   = SplashScreen(icon_path=icon_path)
         self._settings_screen = SettingsScreen()
-        self._run_screen = RunScreen()
-        self._done_screen = DoneScreen()
+        self._run_screen      = RunScreen()
+        self._done_screen     = DoneScreen()
 
-        self._stack.addWidget(self._settings_screen)   # index 0
-        self._stack.addWidget(self._run_screen)         # index 1
-        self._stack.addWidget(self._done_screen)        # index 2
+        self._stack.addWidget(self._splash_screen)    # index 0
+        self._stack.addWidget(self._settings_screen)  # index 1
+        self._stack.addWidget(self._run_screen)        # index 2
+        self._stack.addWidget(self._done_screen)       # index 3
 
         self._connect_signals()
-        self._stack.setCurrentIndex(IDX_SETTINGS)
+        self._stack.setCurrentIndex(IDX_SPLASH)
 
     # ------------------------------------------------------------------
     # Signal wiring
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
+        # Splash screen → Settings screen
+        self._splash_screen.launch.connect(self._go_settings)
+
         # Settings screen → Run screen
         self._settings_screen.proceed.connect(self._on_settings_proceed)
 
@@ -83,15 +92,12 @@ class MainWindow(QMainWindow):
         # Done screen → Run screen
         self._done_screen.run_again.connect(self._go_run)
 
+        # Done screen → Settings screen (custom range)
+        self._done_screen.run_custom_range.connect(self._go_settings)
+
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
-
-    def _on_settings_proceed(self, settings: Settings) -> None:
-        """Called when the user saves Settings and clicks Continue."""
-        total_rows = self._count_input_rows(settings)
-        self._run_screen.configure(settings, total_rows)
-        self._stack.setCurrentIndex(IDX_RUN)
 
     def _go_settings(self) -> None:
         """Navigate to Settings (only when no run is active)."""
@@ -104,6 +110,12 @@ class MainWindow(QMainWindow):
             return
         self._settings_screen.refresh()
         self._stack.setCurrentIndex(IDX_SETTINGS)
+
+    def _on_settings_proceed(self, settings: Settings) -> None:
+        """Called when the user saves Settings and clicks Continue."""
+        total_rows = self._count_input_rows(settings)
+        self._run_screen.configure(settings, total_rows)
+        self._stack.setCurrentIndex(IDX_RUN)
 
     def _on_run_finished(self) -> None:
         """Navigate to Done after a successful run."""
