@@ -154,6 +154,10 @@ export default function Run({ settings, onDone, onSettings }) {
     setLogLines(prev => [...prev, '[GUI] Login confirmed — continuing…']);
   }
 
+  function handleOpenLog() {
+    call('open_log', settings?.pipeline_dir ?? '');
+  }
+
   // ------------------------------------------------------------------
   // Derived progress metrics
   // ------------------------------------------------------------------
@@ -362,6 +366,15 @@ export default function Run({ settings, onDone, onSettings }) {
         </button>
 
         <span style={{ flexGrow: 1 }} />
+        
+        <button
+          className="btn-ghost px-5"
+          style={{ height: 40 }}
+          onClick={handleOpenLog}
+          title="Open the active log file"
+        >
+          📋&nbsp; Open Log File
+        </button>
       </div>
     </div>
   );

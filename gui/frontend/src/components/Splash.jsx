@@ -42,7 +42,8 @@ export default function Splash({ onLaunch }) {
             fontSize: 28,
             color: '#fff',
             letterSpacing: '-0.5px',
-            lineHeight: 1.2,
+            lineHeight: 1.35,
+            paddingBottom: '4px',
           }}
         >
           MahaBOCW<br />Verification Tool
@@ -54,7 +55,7 @@ export default function Splash({ onLaunch }) {
           style={{ color: 'var(--text-secondary)', maxWidth: 340 }}
         >
           Automated OCR &amp; web-based college verification pipeline.<br />
-          Processes beneficiary records against the MahaDBT portal in bulk.
+          Processes beneficiary records against the IWBMS portal in bulk.
         </p>
 
         {/* Version pill */}
