@@ -53,7 +53,7 @@ gui/
 ├── packaging/
 │   ├── mahabocw_gui.spec    # PyInstaller build spec
 │   ├── version_info.txt     # Windows version resource
-│   ├── installer.iss        # GUI Inno Setup installer script (MAHABOCW-GUI-Setup.exe)
+│   ├── gui-installer.iss    # GUI Inno Setup installer script (MAHABOCW-GUI-Setup.exe)
 │   └── pipeline_installer.iss  # Pipeline Inno Setup installer (MAHABOCW-Pipeline-Setup.exe)
 ├── requirements.txt         # PySide6, psutil, openpyxl only
 └── README.md                # This file
@@ -100,9 +100,9 @@ Place a 256×256 `.ico` file at `gui/app/resources/icon.ico`.
 
 There are two independent installer scripts:
 
-**GUI installer** (`installer.iss`) → `MAHABOCW-GUI-Setup.exe`
-1. Open `gui/packaging/installer.iss` in **Inno Setup Compiler** and click **Build**.
-   (`installer.iss` references `docs/SETUP_INSTRUCTIONS.md` at the repo root directly — no manual copy needed.)
+**GUI installer** (`gui-installer.iss`) → `MAHABOCW-GUI-Setup.exe`
+1. Open `gui/packaging/gui-installer.iss` in **Inno Setup Compiler** and click **Build**.
+   (`gui-installer.iss` references `docs/SETUP_INSTRUCTIONS.md` at the repo root directly — no manual copy needed.)
 2. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
 
 **Pipeline installer** (`pipeline_installer.iss`) → `MAHABOCW-Pipeline-Setup.exe`

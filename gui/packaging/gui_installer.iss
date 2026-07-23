@@ -1,4 +1,4 @@
-; packaging/installer.iss
+; packaging/gui_installer.iss
 ; Inno Setup script for MAHABOCW Verification Tool GUI installer.
 ;
 ; Build instructions:

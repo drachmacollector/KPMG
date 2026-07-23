@@ -54,7 +54,7 @@ gui/
 ├── packaging/
 │   ├── mahabocw_gui.spec          # PyInstaller spec (pywebview hiddenimports, frontend datas)
 │   ├── version_info.txt
-│   ├── installer.iss              # GUI installer (includes WebView2 bootstrapper)
+│   ├── gui-installer.iss           # GUI installer (includes WebView2 bootstrapper)
 │   └── pipeline_installer.iss
 └── README.md
 ```
