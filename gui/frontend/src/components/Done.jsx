@@ -31,7 +31,7 @@ export default function Done({ donePayload, settings, onRunAgain, onCustomRange 
   function openLog()    { call('open_log',  settings?.pipeline_dir ?? ''); }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
+    <div className="flex flex-col h-full bg-transparent">
       {/* Accent top bar — green for done */}
       <div
         style={{

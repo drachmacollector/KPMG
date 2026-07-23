@@ -168,7 +168,7 @@ export default function Run({ settings, onDone, onSettings }) {
   // Render
   // ------------------------------------------------------------------
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
+    <div className="flex flex-col h-full bg-transparent">
       {/* Accent top bar */}
       <div className="accent-bar" />
 
@@ -251,8 +251,8 @@ export default function Run({ settings, onDone, onSettings }) {
 
       {/* Log pane */}
       <div
-        className="flex-1 flex flex-col px-6 py-4 overflow-hidden"
-        style={{ background: 'var(--bg-base)', minHeight: 0 }}
+        className="flex-1 flex flex-col px-6 py-4 overflow-hidden bg-transparent"
+        style={{ minHeight: 0 }}
       >
         <div className="section-label mb-2">Live Output</div>
         <div
@@ -281,9 +281,8 @@ export default function Run({ settings, onDone, onSettings }) {
 
       {/* Progress bar + stat */}
       <div
-        className="px-6 py-4 flex items-center gap-6 shrink-0"
+        className="px-6 py-4 flex items-center gap-6 shrink-0 bg-transparent"
         style={{
-          background: 'var(--bg-surface)',
           borderTop: '1px solid var(--border)',
         }}
       >
@@ -336,9 +335,8 @@ export default function Run({ settings, onDone, onSettings }) {
 
       {/* Button bar */}
       <div
-        className="flex items-center gap-3 px-6 py-4 shrink-0"
+        className="flex items-center gap-3 px-6 py-4 shrink-0 bg-transparent"
         style={{
-          background: 'var(--bg-deep)',
           borderTop: '1px solid var(--border)',
           height: 72,
         }}

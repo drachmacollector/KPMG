@@ -181,14 +181,14 @@ export default function Settings({ onProceed }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full" style={{ background: 'var(--bg-base)' }}>
+      <div className="flex items-center justify-center h-full bg-transparent">
         <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading settings…</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
+    <div className="flex flex-col h-full bg-transparent">
       {/* Accent top bar */}
       <div className="accent-bar" />
 

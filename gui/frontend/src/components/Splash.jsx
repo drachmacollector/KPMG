@@ -22,16 +22,12 @@ export default function Splash({ onLaunch }) {
   return (
     <div
       className="flex items-center justify-center h-full w-full"
-      style={{
-        background: 'radial-gradient(ellipse at 60% 40%, #0d1b3e 0%, #080d18 60%)',
-      }}
     >
       {/* Card — fades in on mount */}
       <div
         className="card flex flex-col items-center text-center px-14 py-14 w-[500px]"
         style={{
-          animation: 'fadeIn 0.7s cubic-bezier(0.16,1,0.3,1) both',
-          background: 'linear-gradient(180deg, #151f32 0%, #131d2e 100%)',
+          animation: 'fadeIn 0.8s cubic-bezier(0.16,1,0.3,1) both, float 6s ease-in-out infinite',
         }}
       >
         {/* App icon / logo */}
