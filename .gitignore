@@ -21,6 +21,7 @@ test_data_output.xlsx
 dist
 build
 Output
+node_modules/
 
 # Python
 __pycache__/
