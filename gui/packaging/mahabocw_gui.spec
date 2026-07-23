@@ -47,7 +47,7 @@ a = Analysis(
     ],
     hiddenimports=[
         # pywebview + Windows backend
-        "pywebview",
+        "webview",
         "clr",
         "webview.platforms.edgechromium",
         # openpyxl lazy writer (row-count query)
