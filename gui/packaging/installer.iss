@@ -66,3 +66,13 @@ Filename: "{app}\mahabocw_gui.exe"; Description: "Launch MAHABOCW Verification T
 
 [UninstallDelete]
 Type: files; Name: "{userappdata}\MAHABOCW-GUI\settings.json"
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    { Set progress bar to a continuous looping animation during the [Run] section }
+    WizardForm.ProgressGauge.Style := npbstMarquee;
+  end;
+end;

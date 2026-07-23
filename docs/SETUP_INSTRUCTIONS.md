@@ -8,7 +8,7 @@ the first time. After this one-time setup, you'll only ever need step 4.
 - Windows 10 or later, 64-bit
 - At least 16 GB of RAM recommended (the tool runs a local AI model)
 - A stable internet connection during setup and during each run
-- Your Gemini API key (ask whoever provided this tool if you don't have one yet)
+- Your Gemini API key
 - **Python 3.12 or 3.13** installed with "Add Python to PATH" checked
   (download from https://www.python.org/downloads/ — choose the latest
   stable 3.12.x or 3.13.x release; Python 3.11 has been discontinued as a
@@ -16,7 +16,7 @@ the first time. After this one-time setup, you'll only ever need step 4.
 
 ## Step 1 — Install the pipeline
 
-Run **MAHABOCW-Pipeline-Setup.exe** (provided alongside this document) and follow
+Run **MAHABOCW-Pipeline-Setup.exe**  and follow
 the on-screen prompts.
 
 The installer will:

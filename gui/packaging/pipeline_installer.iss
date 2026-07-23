@@ -68,6 +68,8 @@ Source: "..\..\web_resolver.py";           DestDir: "{app}"; Flags: ignoreversio
 Source: "..\..\logger_config.py";          DestDir: "{app}"; Flags: ignoreversion
 ; CPU-safe requirements file (paddlepaddle, not paddlepaddle-gpu)
 Source: "..\..\requirements-lock-cpu.txt"; DestDir: "{app}"; Flags: ignoreversion
+; GPU requirements file (paddlepaddle-gpu + CUDA libs)
+Source: "..\..\requirements-lock.txt"; DestDir: "{app}"; Flags: ignoreversion
 ;
 ; NOT shipped:
 ;   institution_cache.json — client must start with a clean cache, not the dev cache.
@@ -88,12 +90,21 @@ Filename: "cmd.exe"; \
   Flags: runhidden; \
   StatusMsg: "Upgrading pip...";
 
-; Step B: install all pipeline dependencies (~several minutes for PaddleOCR/pandas/etc.)
+; Step B (CPU): install all pipeline dependencies (~several minutes for PaddleOCR/pandas/etc.)
 Filename: "cmd.exe"; \
   Parameters: "/c python -m pip install -r ""{app}\requirements-lock-cpu.txt"" >> ""{app}\install.log"" 2>&1"; \
   WorkingDir: "{app}"; \
   Flags: runhidden; \
-  StatusMsg: "Installing Python packages (this may take several minutes)...";
+  StatusMsg: "Installing Python packages (CPU Mode)..."; \
+  Check: IsCpuInstall
+
+; Step B (GPU): install all pipeline dependencies (~several minutes for PaddleOCR/pandas/etc.)
+Filename: "cmd.exe"; \
+  Parameters: "/c python -m pip install -r ""{app}\requirements-lock.txt"" >> ""{app}\install.log"" 2>&1"; \
+  WorkingDir: "{app}"; \
+  Flags: runhidden; \
+  StatusMsg: "Installing Python packages (GPU Mode)..."; \
+  Check: IsGpuInstall
 
 ; Step C: download Playwright's self-contained Chromium browser (~300 MB)
 Filename: "cmd.exe"; \
@@ -138,6 +149,36 @@ Type: files; Name: "{app}\install.log"
 // If not found, show a clear message and abort before any files are written.
 // ------------------------------------------------------------------
 
+var
+  HardwarePage: TInputOptionWizardPage;
+
+function IsCpuInstall(): Boolean;
+begin
+  Result := HardwarePage.Values[0];
+end;
+
+function IsGpuInstall(): Boolean;
+begin
+  Result := HardwarePage.Values[1];
+end;
+
+procedure InitializeWizard;
+begin
+  { Create a custom wizard page for hardware selection }
+  HardwarePage := CreateInputOptionPage(
+    wpWelcome,
+    'Hardware Acceleration',
+    'Select the appropriate installation mode for your system.',
+    'Please select whether you want to install the standard CPU version or the high-performance NVIDIA GPU version.' + #13#10#13#10 + 'Note: The GPU version REQUIRES a dedicated NVIDIA graphics card. AMD cards are not supported by the underlying Python OCR library.',
+    True, False);
+
+  HardwarePage.Add('Standard Installation (CPU - Recommended for most users)');
+  HardwarePage.Add('High Performance Installation (Requires a dedicated NVIDIA GPU)');
+  
+  { Select CPU by default }
+  HardwarePage.Values[0] := True;
+end;
+
 function IsPythonAvailable(): Boolean;
 var
   ResultCode: Integer;
@@ -164,5 +205,14 @@ begin
       MB_OK
     );
     Result := False;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    { Set progress bar to a continuous looping animation during the long pip/playwright downloads }
+    WizardForm.ProgressGauge.Style := npbstMarquee;
   end;
 end;
