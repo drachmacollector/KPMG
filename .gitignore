@@ -21,6 +21,7 @@ test_data_output.xlsx
 dist
 build
 Output
+node_modules/
 
 # Python
 __pycache__/
@@ -42,3 +43,12 @@ logs/
 # Runtime-mutating cache — do not ship dev cache to clients on fresh clone
 institution_cache.json
 MAHABOCW_GUI_Implementation_Plan.md
+gui/convert_icon_pil.py
+gui/convert_icon_rounded.py
+gui/convert_icon.py
+gui/screenshot_01_splash.png
+gui/screenshot_02_settings.png
+gui/screenshot_03_run.png
+gui/screenshot_04_done.png
+gui/take_screenshots.py
+docs/pywebview_migration_plan.md
