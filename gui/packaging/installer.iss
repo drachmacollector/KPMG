@@ -23,14 +23,16 @@ WizardStyle=modern
 ; Require Windows 10 or later (version 10.0)
 MinVersion=10.0
 ; 64-bit only (the pipeline's Python and dependencies are 64-bit)
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ; PrivilegesRequired=admin is necessary here because the [Run] section executes
 ; the Microsoft Edge WebView2 Evergreen Bootstrapper (MicrosoftEdgeWebview2Setup.exe)
 ; with the /silent /install flags.  The bootstrapper writes to HKLM and installs a
 ; system-wide runtime component, which requires an elevated process.  Without admin
 ; rights the bootstrapper silently fails and the app cannot open.
 PrivilegesRequired=admin
+; Acknowledge and suppress the warning about using {userappdata} in an admin installer
+UsedUserAreasWarning=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

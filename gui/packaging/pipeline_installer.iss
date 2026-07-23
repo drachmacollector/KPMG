@@ -43,8 +43,8 @@ WizardStyle=modern
 ; Require Windows 10 or later (matches GUI installer)
 MinVersion=10.0
 ; 64-bit only (Python ecosystem packages are 64-bit)
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ; This is a background component, not a launchable app — no Desktop/Start Menu icon.
 ; The uninstaller entry in Add/Remove Programs is sufficient.
 CreateUninstallRegKey=yes
