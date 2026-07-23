@@ -14,8 +14,8 @@
 #   extractor.py        -> ollama
 #   ocr_engine.py       -> paddlepaddle, paddleocr<3.0, tqdm
 #   web_resolver.py     -> google-genai, rapidfuzz, python-dotenv
-#   gui/app/runner.py   -> psutil, PySide6
-#   gui/app/main.py     -> PySide6
+#   gui/app/runner.py   -> psutil, pywebview
+#   gui/app/main.py     -> pywebview
 
 # ---------------------------------------------------------------------------
 # Core pipeline — direct imports
@@ -126,9 +126,12 @@ charset-normalizer==3.4.7
 idna==3.18
 
 # ---------------------------------------------------------------------------
-# GUI (PySide6 + psutil)
+# GUI (pywebview + pythonnet + psutil)
+# pywebview uses the OS-native Edge WebView2 runtime on Windows.
+# pythonnet is required by pywebview's edgechromium backend on Windows.
 # ---------------------------------------------------------------------------
-PySide6>=6.6.0
+pywebview>=5.0
+pythonnet>=3.0
 psutil==7.2.2
 
 # ---------------------------------------------------------------------------

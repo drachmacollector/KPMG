@@ -2,19 +2,31 @@
 """
 packaging/mahabocw_gui.spec
 
-PyInstaller spec for the MAHABOCW GUI.
+PyInstaller spec for the MAHABOCW GUI — pywebview + React edition.
 
-Build from the gui/ directory:
-    pyinstaller packaging/mahabocw_gui.spec
+Build order (run BOTH steps every time — a stale frontend_dist/ will
+silently ship an outdated UI with no build-time error):
+    1. npm run build   (inside gui/frontend/)
+    2. pyinstaller packaging/mahabocw_gui.spec   (from gui/)
 
 Output: gui/dist/mahabocw_gui/   (onedir, no console window)
 
-Notes:
-  - console=False  — no terminal window appears behind the GUI.
-  - icon.ico is bundled as the executable icon.
-  - The entire app/ package is collected via pathex pointing at gui/.
-  - PySide6 Qt plugins are collected automatically by PyInstaller's
-    hook-PySide6 hooks; no manual hiddenimport is usually needed.
+NOTE: onedir is intentional.  onefile self-extracting binaries are flagged
+by antivirus heuristics more often, which matters for a government-client
+rollout.  Switch to onefile only after a clean onedir AV test.
+
+Hidden imports:
+    pywebview         — the main webview package
+    clr               — pythonnet CLR bridge (required by pywebview's
+                        edgechromium backend on Windows)
+    webview.platforms.edgechromium
+                      — pywebview's Windows WebView2 backend; this exact
+                        module path was confirmed against pywebview 5.x.
+                        Re-confirm if the pinned version changes.
+    openpyxl.cell._writer
+                      — openpyxl lazy import not caught by static analysis
+    psutil            — process control (pause/resume/cancel)
+    openpyxl          — row-count query in Api.start_pipeline()
 """
 
 import os
@@ -27,19 +39,32 @@ a = Analysis(
     pathex=[GUI_ROOT],
     binaries=[],
     datas=[
-        # Bundle the icon so _resource_path() can find it inside the bundle.
+        # App icon
         (os.path.join(GUI_ROOT, "app", "resources", "icon.ico"), "resources"),
+        # Built React/Vite SPA — must match _frontend_dist_path() in app/main.py.
+        # Run `npm run build` in gui/frontend/ before this spec to keep it fresh.
+        (os.path.join(GUI_ROOT, "frontend_dist"), "frontend_dist"),
     ],
     hiddenimports=[
-        "psutil",
+        # pywebview + Windows backend
+        "pywebview",
+        "clr",
+        "webview.platforms.edgechromium",
+        # openpyxl lazy writer (row-count query)
         "openpyxl",
         "openpyxl.cell._writer",
+        # process control
+        "psutil",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude heavy packages that are NOT needed by the GUI.
+        # Qt / PySide6 are no longer used — exclude everything.
+        "PySide6",
+        "PyQt5",
+        "PyQt6",
+        # Other heavy packages not needed by the GUI wrapper.
         "pandas",
         "playwright",
         "torch",

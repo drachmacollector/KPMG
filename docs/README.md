@@ -89,10 +89,21 @@ The browser opens in non-headless mode. Log in to the MAHABOCW portal manually, 
 
 A user-friendly desktop application is available to configure and run the pipeline without using the terminal.
 
-- **Features**: Visual settings configuration, live log streaming, progress tracking, and OS-level pause/resume functionality.
-- **Tech Stack**: Built with Python and PySide6.
-- **Location**: All GUI code and packaging scripts are located in the [`gui/`](../gui/) directory.
-- **Setup & Usage**: See the [GUI Developer Guide](../gui/README.md) for instructions on how to run and package the app.
+- **Features**: Visual settings configuration, live log streaming, progress tracking, OS-level pause/resume/cancel, and a native folder/file picker.
+- **Tech Stack**: React 18 + Vite + Tailwind CSS SPA rendered via [pywebview](https://pywebview.flowrl.com/) + OS-native Edge WebView2 runtime. Python acts as a thin backend exposing a JS API bridge (`window.pywebview.api`).
+- **Location**: All GUI code and packaging scripts are in the [`gui/`](../gui/) directory.
+- **Building the GUI** (two-step — both must run in order):
+  ```powershell
+  # Step 1 — build the React SPA
+  cd gui\frontend
+  npm run build
+
+  # Step 2 — bundle with PyInstaller
+  cd ..
+  pyinstaller packaging\mahabocw_gui.spec
+  ```
+  Skipping step 1 before step 2 will silently ship a stale or missing frontend.
+- **Setup & Usage**: See the [GUI Developer Guide](../gui/README.md) for full instructions.
 
 ---
 

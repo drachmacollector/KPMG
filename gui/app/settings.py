@@ -126,3 +126,25 @@ class Settings:
                 overrides["EXCEL_END_ROW"] = self.end_row
 
         return overrides
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for api.py (JS bridge compatibility)
+# These accept/return plain dicts so the bridge doesn't need to know about
+# the Settings dataclass.
+# ---------------------------------------------------------------------------
+
+def load_settings() -> dict:
+    """Load persisted settings and return as a plain dict for the JS bridge."""
+    return asdict(Settings.load())
+
+
+def save_settings(data: dict) -> None:
+    """Accept a plain dict from the JS bridge and persist it.
+
+    Forward-compat: unknown keys are ignored; missing keys fall back to
+    dataclass defaults, matching the same contract as Settings.load().
+    """
+    valid_keys = {f.name for f in Settings.__dataclass_fields__.values()}
+    filtered = {k: v for k, v in data.items() if k in valid_keys}
+    Settings(**filtered).save()

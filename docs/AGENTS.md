@@ -49,3 +49,18 @@ Note: `institution_cache.json` is a runtime-mutating file (added to `.gitignore`
 1. Re-read the parts of `ARCHITECTURE.md` your change touches; fix any now-inaccurate text, tables, thresholds, or diagram nodes/edges.
 2. If the change affects what a user needs to know to set up, run, or understand the project at a glance, update `README.md` accordingly — keep it concise; move detail into `ARCHITECTURE.md` instead of expanding the README.
 3. Mention in your summary/PR description which docs you updated and why.
+
+## GUI build order (added: pywebview migration)
+
+The GUI is now a two-step build pipeline. **Always run both steps in order:**
+
+1. `cd gui/frontend && npm run build` — builds the React/Vite SPA into `gui/frontend/dist/`.
+2. `pyinstaller packaging/mahabocw_gui.spec` (from `gui/`) — bundles the Python backend and the built frontend together.
+
+**If you run PyInstaller without running `npm run build` first, the packaged executable will ship a stale or missing frontend UI with no build-time error.** There is no automated check for this — it is a manual discipline requirement.
+
+Node.js 20 LTS or later is required. The pinned version is Node 20 LTS.
+
+## ARCHITECTURE.md update — pywebview migration (2026-07)
+
+The GUI was migrated from PySide6/QWidgets to pywebview + React/Tailwind. `ARCHITECTURE.md` was updated in the same change, per the documentation rule above. The updated document covers: the `Api` JS bridge surface, all push event names and payload shapes, the `PipelineRunner` thread change rationale, and the WebView2 Runtime dependency.

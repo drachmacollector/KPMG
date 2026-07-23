@@ -1,7 +1,7 @@
 """
 app/main.py
 
-Application entry point.
+Application entry point — pywebview edition.
 
 Usage (from the gui/ directory):
     python -m app.main
@@ -9,6 +9,19 @@ Usage (from the gui/ directory):
     python app/main.py
 
 PyInstaller uses this as the target script when building the executable.
+
+DEV_MODE:
+    Set MAHABOCW_GUI_DEV=1 to load the React app from the Vite dev server
+    (http://localhost:5173) instead of the bundled static files.  This
+    enables Vite hot-reload during UI development.
+
+    Dev workflow:
+        Terminal 1:  cd gui/frontend && npm run dev
+        Terminal 2:  MAHABOCW_GUI_DEV=1 python -m app.main
+
+Production:
+    The entry HTML is at <bundle_root>/frontend_dist/index.html, which
+    matches the datas tuple in packaging/mahabocw_gui.spec.
 """
 from __future__ import annotations
 
@@ -29,49 +42,76 @@ def _add_gui_to_path() -> None:
 
 _add_gui_to_path()
 
-from PySide6.QtGui import QFontDatabase, QFont
-from PySide6.QtWidgets import QApplication
-
-from app.ui.main_window import MainWindow
-from app.ui.styles import APP_STYLESHEET
+import webview  # noqa: E402 — must come after path fix
+from app.api import Api  # noqa: E402
 
 
-def _resource_path(relative: str) -> str:
+DEV_MODE: bool = os.environ.get("MAHABOCW_GUI_DEV") == "1"
+
+
+def _frontend_dist_path() -> str:
     """
-    Resolve a path relative to this file, handling both normal and PyInstaller
-    frozen environments (sys._MEIPASS).
+    Resolve the path to the bundled frontend index.html.
+
+    In a PyInstaller onefile/onedir bundle, _MEIPASS is the temporary
+    extraction directory that contains the datas entries.
+    In development (non-frozen), the path is relative to this file.
     """
-    if hasattr(sys, "_MEIPASS"):
-        # Running inside a PyInstaller bundle.
+    if getattr(sys, "frozen", False):
         base = sys._MEIPASS  # type: ignore[attr-defined]
     else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, relative)
+        # Non-frozen: gui/app/main.py → gui/ (one level up from app/)
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "frontend_dist", "index.html")
 
 
-def main() -> int:
-    # High-DPI support (PySide6 enables it by default on Qt6, but be explicit).
-    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+def main() -> None:
+    api = Api()
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("MAHABOCW Verification Tool")
-    app.setOrganizationName("KPMG")
-    app.setApplicationVersion("1.0.0")
+    # In DEV_MODE load from the Vite dev server; in production load the
+    # built static file.  Both paths resolve to the same React app.
+    entry = "http://localhost:5173" if DEV_MODE else _frontend_dist_path()
 
-    # Apply the global dark stylesheet.
-    app.setStyleSheet(APP_STYLESHEET)
+    window = webview.create_window(
+        "MAHABOCW Verification Tool",
+        entry,
+        js_api=api,
+        width=1100,
+        height=750,
+        resizable=True,
+        min_size=(800, 600),
+        # Match the React app's deep background so there's no white flash
+        # during the brief window before React hydrates.
+        background_color="#080d18",
+    )
+    api.set_window(window)
 
-    # Prefer Segoe UI on Windows; fall back gracefully.
-    font = QFont("Segoe UI", 10)
-    font.setStyleStrategy(QFont.PreferAntialias)
-    app.setFont(font)
+    # ------------------------------------------------------------------
+    # Window close guard
+    # Prevent orphan subprocesses if the user closes the window mid-run.
+    # pywebview's on_top confirmation dialog is used instead of QMessageBox.
+    # ------------------------------------------------------------------
+    def on_closing() -> bool:
+        """
+        Return True to allow the close, False to prevent it.
+        Called on the main thread by pywebview before the window is destroyed.
+        """
+        if api._runner and api._runner._thread and api._runner._thread.is_alive():
+            confirmed = window.create_confirmation_dialog(
+                "Run in Progress",
+                "A pipeline run is in progress.\n\n"
+                "Cancel the run and exit? Progress already saved will not be lost.",
+            )
+            if confirmed:
+                api._runner.cancel()
+                return True   # allow close
+            return False      # prevent close
+        return True           # no active run — allow close
 
-    icon_path = _resource_path(os.path.join("resources", "icon.ico"))
-    window = MainWindow(icon_path=icon_path)
-    window.show()
+    window.events.closing += on_closing
 
-    return app.exec()
+    webview.start(debug=DEV_MODE)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
