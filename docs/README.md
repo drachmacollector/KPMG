@@ -36,74 +36,44 @@ The pipeline runs in two document phases per claim: **Phase 1** (bonafide certif
 
 ## 3. Repository Layout
 
-| Path | Purpose |
-| --- | --- |
-| `verify_colleges.py` | Main orchestration script — Excel I/O, browser automation, phase control, scoring, output writes. |
-| `document_processor.py` | Converts PDFs/images to normalized PNG pages; hashing and orientation correction. |
-| `ocr_engine.py` | PaddleOCR initialization and `ocr_image()`. |
-| `extractor.py` | Ollama/Qwen-based document classification and college detail extraction. |
-| `web_resolver.py` | Institution resolution via cache, Gemini search grounding, and OpenRouter fallback. |
+| Path                    | Purpose                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `verify_colleges.py`    | Main orchestration script — Excel I/O, browser automation, phase control, scoring, output writes. |
+| `document_processor.py` | Converts PDFs/images to normalized PNG pages; hashing and orientation correction.                 |
+| `ocr_engine.py`         | PaddleOCR initialization and `ocr_image()`.                                                       |
+| `extractor.py`          | Ollama/Qwen-based document classification and college detail extraction.                          |
+| `web_resolver.py`       | Institution resolution via cache, Gemini search grounding, and OpenRouter fallback.               |
 
-## 4. Setup
+## 4. Setup & Usage
 
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-playwright install chromium
-```
+> **🚀 Quick Start** If you simply want to test or use the final software, head over to the **Releases v2.0.0** section to the right and download the two packaged `.exe` installers at the bottom.
 
-Install the GPU build of PaddlePaddle separately, since it depends on the CUDA wheel:
-This project was originally built using an NVIDIA RTX 4060.
+### Developer Setup (Pipeline)
 
-```powershell
-pip install paddlepaddle-gpu==2.6.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
-```
+1. **Environment:**
+   ```powershell
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   pip install paddlepaddle-gpu==2.6.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+   playwright install chromium
+   ```
+2. **Local AI Model:** `ollama pull qwen2.5:7b-instruct`
+3. **Environment Variables:** Create a `.env` file with `GEMINI_API_KEY=...` (and optionally `OPENROUTER_API_KEY=...` for fallback).
+4. **Run:** Execute `python verify_colleges.py`. When the browser opens, manually log into the MAHABOCW portal, navigate to the Claims section, then return to the terminal and press Enter to begin automation.
 
-The project uses `nvidia-cudnn-cu11` so cuDNN DLLs resolve from the Python environment without a system-wide CUDA install.
+### Developer Setup (GUI)
 
-Pull the extraction model in Ollama:
+A user-friendly desktop application (React/Tailwind + pywebview) is available to configure and run the pipeline visually. All GUI code is in the [`gui/`](../gui/) directory.
 
-```powershell
-ollama pull qwen2.5:7b-instruct
-```
-
-Create a `.env` file in the project root with the resolver keys:
-
-```text
-GEMINI_API_KEY=...
-OPENROUTER_API_KEY=...
-```
-
-`OPENROUTER_API_KEY` is only used as a fallback when every Gemini model call fails.
-
-### Running the pipeline
+To build the standalone GUI executable:
 
 ```powershell
-python verify_colleges.py
+cd gui\frontend && npm run build
+cd .. && pyinstaller packaging\mahabocw_gui.spec
 ```
 
-The browser opens in non-headless mode. Log in to the MAHABOCW portal manually, open the Claims section, bring the Acknowledgement Number filter into view, then return to the terminal and press Enter. The script processes the configured row window, saves documents under `downloads/`, logs to `logs/`, and updates the output Excel workbook — resuming safely if interrupted, since already-processed rows are skipped.
-
-## 5. Desktop GUI Application
-
-A user-friendly desktop application is available to configure and run the pipeline without using the terminal.
-
-- **Features**: Visual settings configuration, live log streaming, progress tracking, OS-level pause/resume/cancel, and a native folder/file picker.
-- **Tech Stack**: React 18 + Vite + Tailwind CSS SPA rendered via [pywebview](https://pywebview.flowrl.com/) + OS-native Edge WebView2 runtime. Python acts as a thin backend exposing a JS API bridge (`window.pywebview.api`).
-- **Location**: All GUI code and packaging scripts are in the [`gui/`](../gui/) directory.
-- **Building the GUI** (two-step — both must run in order):
-  ```powershell
-  # Step 1 — build the React SPA
-  cd gui\frontend
-  npm run build
-
-  # Step 2 — bundle with PyInstaller
-  cd ..
-  pyinstaller packaging\mahabocw_gui.spec
-  ```
-  Skipping step 1 before step 2 will silently ship a stale or missing frontend.
-- **Setup & Usage**: See the [GUI Developer Guide](../gui/README.md) for full instructions.
+For full instructions, see the [GUI Developer Guide](../gui/README.md).
 
 ---
 
