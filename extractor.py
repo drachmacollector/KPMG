@@ -4,6 +4,7 @@ import re
 from logger_config import logger
 
 MODEL = "qwen2.5:7b-instruct"
+NUM_CTX = 8192
 
 SYSTEM_PROMPT = """
 You are an expert document extraction and OCR correction system.
@@ -240,27 +241,68 @@ def extract_information(ocr_text):
                 "content": ocr_text
             }
         ],
-        options={"temperature": 0.0},
+        # format="json" constrains decoding to valid JSON.  num_ctx is raised
+        # explicitly because the system prompt alone is ~2k tokens; older
+        # Ollama defaults (2048) would silently truncate the prompt + OCR text.
+        format="json",
+        options={"temperature": 0.0, "num_ctx": NUM_CTX},
     )
 
     content = response["message"]["content"].strip()
     logger.debug(f"[Extractor] Raw LLM response: {content}")
+    return parse_llm_json(content)
 
-    # Strip any markdown code fences the model may accidentally add
-    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
 
+def parse_llm_json(content):
+    """Parse the model's reply into a dict, tolerating stray text or fences."""
+    content = (content or "").strip()
+    candidates = [content]
+    # Fallback: first {...} block (handles markdown fences / leading prose).
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
     if json_match:
-        content = json_match.group(0)
+        candidates.append(json_match.group(0))
+    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+    if json_match:
+        candidates.append(json_match.group(0))
 
+    last_error = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+            last_error = ValueError("LLM response is not a JSON object")
+        except Exception as e:
+            last_error = e
+
+    logger.error(f"[Extractor] JSON parsing failed: {last_error}")
+    return {
+        "relevant": False,
+        "parse_error": True,
+        "raw_response": content
+    }
+
+
+def check_ollama_ready(host_timeout=5):
+    """
+    Preflight: confirm the Ollama server is reachable and MODEL is pulled.
+    Returns (ok: bool, message: str).
+    """
     try:
-        data = json.loads(content)
-        if not isinstance(data, dict):
-            raise ValueError("LLM response is not a JSON object")
-        return data
+        listing = ollama.list()
     except Exception as e:
-        logger.error(f"[Extractor] JSON parsing failed: {e}")
-        return {
-            "relevant": False,
-            "parse_error": True,
-            "raw_response": content
-        }
+        return False, (
+            f"Cannot reach the Ollama server ({e}). Make sure Ollama is installed "
+            "and running."
+        )
+    models = listing.get("models", []) if isinstance(listing, dict) else getattr(listing, "models", [])
+    names = set()
+    for m in models or []:
+        name = m.get("model") or m.get("name") if isinstance(m, dict) else (getattr(m, "model", None) or getattr(m, "name", None))
+        if name:
+            names.add(name)
+    if MODEL not in names and f"{MODEL}:latest" not in names:
+        return False, (
+            f"The Ollama model '{MODEL}' is not installed. Run: ollama pull {MODEL}"
+        )
+    return True, "ok"

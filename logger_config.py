@@ -76,3 +76,24 @@ def setup_logger():
     return logger
 
 logger = setup_logger()
+
+
+# ---------------------------------------------------------------------------
+# Structured event protocol (consumed by the GUI's PipelineRunner)
+# ---------------------------------------------------------------------------
+# Each event is a single stdout line:  @@MAHABOCW {"event": "...", ...}
+# The GUI parses these instead of scraping human-readable log text, and hides
+# them from the log pane.  Human-readable logging is unaffected.
+EVENT_PREFIX = "@@MAHABOCW "
+
+
+def emit_event(event: str, **payload) -> None:
+    """Print one machine-readable event line to stdout and flush it."""
+    import json
+
+    record = {"event": event, **payload}
+    try:
+        sys.stdout.write(EVENT_PREFIX + json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        sys.stdout.flush()
+    except Exception:
+        pass

@@ -16,6 +16,7 @@ class LLMUnverifiableError(ValueError):
 import json
 import os
 import re
+import time
 import urllib.request
 
 from dotenv import load_dotenv
@@ -111,15 +112,32 @@ GEMINI_MODELS = [
 def _load_cache() -> dict:
     try:
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as exc:
+        # Never silently overwrite a damaged cache: keep a copy so the
+        # entries can be recovered, then start from an empty cache.
+        backup = f"{CACHE_PATH}.corrupt-{int(time.time())}"
+        try:
+            os.replace(CACHE_PATH, backup)
+            logger.warning(f"[Cache] Cache file was corrupt ({exc}); moved to {backup}")
+        except OSError:
+            logger.warning(f"[Cache] Cache file was corrupt ({exc}) and could not be backed up")
         return {}
 
 
 def _save_cache(cache: dict) -> None:
+    # Atomic write: a crash or forced stop mid-write must never leave a
+    # truncated cache file behind.
+    tmp_path = f"{CACHE_PATH}.tmp"
     try:
-        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CACHE_PATH)
     except Exception as exc:
         logger.warning(f"[Cache] Could not save cache: {exc}")
 
@@ -213,8 +231,15 @@ def _append_city(college_name: str, city: str) -> str:
 
 
 def _is_generic_name(name: str) -> bool:
+    """True when the name has no distinguishing token at all.
+
+    Only names made up entirely of generic words ("Medical College",
+    "Ayurvedic College & Hospital") are rejected.  A short but real name such
+    as "Government Medical College" is accepted — the city is appended
+    afterwards, and the confidence + city checks guard against mismatches.
+    """
     cleaned = _normalise_key(name)
-    if len(cleaned.split()) < 4:
+    if not cleaned:
         return True
     return bool(_GENERIC_NAME_RE.fullmatch(cleaned))
 
@@ -316,6 +341,35 @@ def _parse_model_json(raw_text: str) -> dict:
     return data
 
 
+# Model IDs confirmed to exist for this API key (filled once per process).
+_available_models: list[str] | None = None
+
+
+def _usable_models(client) -> list[str]:
+    """Return GEMINI_MODELS filtered to IDs the API actually serves.
+
+    Order is preserved exactly.  If listing fails (offline, permissions),
+    the configured list is used unchanged.
+    """
+    global _available_models
+    if _available_models is not None:
+        return _available_models
+    try:
+        served = set()
+        for m in client.models.list():
+            name = getattr(m, "name", "") or ""
+            served.add(name.split("/", 1)[-1])
+        usable = [m for m in GEMINI_MODELS if m in served]
+        unknown = [m for m in GEMINI_MODELS if m not in served]
+        if unknown:
+            logger.warning(f"[Gemini] Skipping model IDs not served by the API: {', '.join(unknown)}")
+        _available_models = usable or list(GEMINI_MODELS)
+    except Exception as exc:
+        logger.debug(f"[Gemini] Could not list models ({exc}); using configured list.")
+        _available_models = list(GEMINI_MODELS)
+    return _available_models
+
+
 class GeminiResolver:
     def __init__(self, api_key: str):
         self._client = genai.Client(api_key=api_key)
@@ -324,7 +378,7 @@ class GeminiResolver:
         user_message = _build_user_message(extracted_name, extracted_address)
         last_exc: Exception | None = None
 
-        for i, model_name in enumerate(GEMINI_MODELS):
+        for i, model_name in enumerate(_usable_models(self._client)):
             logger.info(f"- {'Trying' if i == 0 else 'Switching to'} {model_name}")
             try:
                 response = self._client.models.generate_content(
@@ -337,6 +391,12 @@ class GeminiResolver:
                     ),
                 )
                 return _parse_model_json(response.text or "")
+            except LLMUnverifiableError:
+                # A grounded model explicitly said it cannot verify this
+                # institution.  Asking weaker / ungrounded models the same
+                # question only raises the chance of a hallucinated answer.
+                logger.info(f"- {model_name} could not verify the institution")
+                raise
             except Exception as exc:
                 last_exc = exc
                 err = str(exc).lower()

@@ -1,4 +1,5 @@
 import os
+import sys
 import logging as py_logging
 from logger_config import logger
 from tqdm import tqdm
@@ -48,17 +49,20 @@ from paddleocr import PaddleOCR
 
 _suppress_ppocr_gpu_warning()
 
-cuda_available = paddle.device.is_compiled_with_cuda()
+# A CUDA-compiled Paddle build (paddlepaddle-gpu) still needs a physical
+# NVIDIA GPU at runtime; checking only is_compiled_with_cuda() crashes the
+# GPU build on machines without one.  Require at least one visible device.
+cuda_available = False
 gpu_info = "CPU Only"
-if cuda_available:
-    current_device = paddle.device.get_device()
-    try:
-        if 'gpu' in current_device:
-            gpu_id = int(current_device.split(':')[1])
-            gpu_name = paddle.device.cuda.get_device_name(gpu_id)
-            gpu_info = f"{gpu_name} (CUDA Enabled)"
-    except Exception:
-        gpu_info = "CUDA Enabled"
+try:
+    if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+        cuda_available = True
+        try:
+            gpu_info = f"{paddle.device.cuda.get_device_name(0)} (CUDA Enabled)"
+        except Exception:
+            gpu_info = "CUDA Enabled"
+except Exception:
+    cuda_available = False
 
 logger.debug(f"[*] GPU: {gpu_info}")
 
@@ -69,7 +73,8 @@ logger.debug(f"[*] GPU: {gpu_info}")
 import contextlib
 import io
 
-with tqdm(total=1, desc="Loading PaddleOCR", bar_format="{l_bar}{bar:20}|", colour="#FF69B4") as pbar:
+with tqdm(total=1, desc="Loading PaddleOCR", bar_format="{l_bar}{bar:20}|", colour="#FF69B4",
+          disable=not sys.stdout.isatty()) as pbar:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         ocr = PaddleOCR(
             use_angle_cls=True,
