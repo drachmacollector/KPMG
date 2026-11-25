@@ -94,19 +94,21 @@ def main() -> None:
     def on_closing() -> bool:
         """
         Return True to allow the close, False to prevent it.
-        Called on the main thread by pywebview before the window is destroyed.
+        Closing mid-run force-stops the pipeline.  Output and cache writes are
+        atomic, so everything saved before the stop is kept.
         """
-        if api._runner and api._runner._thread and api._runner._thread.is_alive():
+        if api.is_running():
             confirmed = window.create_confirmation_dialog(
                 "Run in Progress",
-                "A pipeline run is in progress.\n\n"
-                "Cancel the run and exit? Progress already saved will not be lost.",
+                "A pipeline run is in progress. "
+                "Stop the run and exit? Claims already saved are kept, and the "
+                "next run resumes from there.",
             )
             if confirmed:
-                api._runner.cancel()
-                return True   # allow close
-            return False      # prevent close
-        return True           # no active run — allow close
+                api.force_stop_pipeline()
+                return True
+            return False
+        return True
 
     window.events.closing += on_closing
 

@@ -3,223 +3,253 @@ app/runner.py
 
 PipelineRunner — manages the verify_colleges.py subprocess.
 
-Architecture change (pywebview migration):
-    Previously subclassed QThread and emitted PySide6 Signals.
-    Now uses threading.Thread and calls api.push_*() to dispatch
-    CustomEvents to the React frontend via window.evaluate_js().
+The pipeline prints machine-readable event lines
+    @@MAHABOCW {"event": "...", ...}
+(see logger_config.emit_event).  The runner turns them into push events for
+the React frontend and hides them from the log pane.  Ordinary log lines are
+batched (one evaluate_js call per ~100 ms) so a chatty run cannot flood the
+WebView bridge.
 
-    Every line of subprocess/psutil logic is preserved exactly.
-    Only the base class and the communication points change:
-
-    Old (QThread + Signal):            New (threading.Thread + push):
-    ─────────────────────────────────  ───────────────────────────────────────
-    self.log_line.emit(line)        →  self.api.push_log({"line": line})
-    self.awaiting_login.emit()      →  self.api.push_awaiting_login()
-    self.progress.emit(n)           →  self.api.push_progress({"count": n, ...})
-    self.finished_ok.emit()         →  self.api.push_done({claims_seen, output})
-    self.finished_error.emit(msg)   →  self.api.push_error({"message": msg})
+Push events (via Api):
+    pipeline-log            {"lines": [str, ...]}
+    pipeline-event          the raw pipeline event dict (claim_start, claim_done, ...)
+    pipeline-awaiting-login {}
+    pipeline-progress       {"count": int, "total": int | None}
+    pipeline-done           {"claims_seen", "output_file", "summary", "stopped"}
+    pipeline-error          {"message": str}
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import threading
+import time
 from typing import Optional
 
 import psutil
 
-from app.settings import Settings
+from app.settings import DATA_DIR, STOP_FILE, Settings
 
+EVENT_PREFIX = "@@MAHABOCW "
 
-# The exact substring the pipeline prints before blocking on input().
+# Fallbacks for an older pipeline that does not emit events.
 LOGIN_PROMPT_MARKER = "Press ENTER here"
-
-# Matches the acknowledgement log lines used to track per-claim progress.
-# Pipeline source (verify_colleges.py ~line 457):
-#   logger.info(f"Acknowledgement: {ack_no}\n")
 ACK_LINE_RE = re.compile(r"Acknowledgement:\s*(\S+)")
 
-# Strip ANSI colour/style escape sequences (tqdm emits these; the log pane
-# in the React frontend would show them as literal garbage text).
+# Strip ANSI colour/style escape sequences.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+LOG_FLUSH_SECS = 0.1
+FORCE_STOP_WAIT_SECS = 5
+
+# Windows: don't flash a console window for the child process.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from *text*."""
     return _ANSI_RE.sub("", text)
 
 
 class PipelineRunner:
-    """
-    Manages a single run of verify_colleges.py as a subprocess.
-
-    Communication with the React frontend happens via the Api instance:
-
-        api.push_log({"line": str})
-            Every stdout/stderr line from the subprocess.
-
-        api.push_awaiting_login()
-            Emitted once when the pipeline prints its human-handoff prompt.
-            The UI should show the login-confirmation banner.
-
-        api.push_progress({"count": int, "total": int | None})
-            Number of claims started so far (driven by Acknowledgement: lines).
-            total is None when the row count is not known.
-
-        api.push_done({"claims_seen": int, "output_file": str})
-            Subprocess exited with code 0.
-
-        api.push_error({"message": str})
-            Subprocess exited with non-zero code, was cancelled, or failed
-            to start.
-    """
+    """Manages a single run of verify_colleges.py as a subprocess."""
 
     def __init__(self, api_ref, settings: dict) -> None:
-        self.api = api_ref          # reference to the Api instance
-        self.settings = settings    # raw dict from the JS bridge
-
-        # Reconstruct typed Settings to reuse build_env_overrides() and
-        # access typed fields without repeating dict-key strings everywhere.
-        self._typed: Settings = Settings(**{
-            k: v for k, v in settings.items()
-            if k in Settings.__dataclass_fields__
-        })
-
-        # total_rows_hint may be injected by Api.start_pipeline(); defaults None.
+        self.api = api_ref
+        self._typed: Settings = Settings.from_dict(settings)
         self._total_rows: Optional[int] = settings.get("_total_rows_hint")
 
         self._thread: Optional[threading.Thread] = None
         self._proc: Optional[subprocess.Popen] = None
         self._claims_seen: int = 0
         self._cancel_requested: bool = False
+        self._stop_requested: bool = False
         self._login_emitted: bool = False
+        self._run_started: bool = False
+        self._uses_events: bool = False
+        self._summary: Optional[dict] = None
+        self._stopped_cleanly: bool = False
+        self._preflight_problems: list = []
+        self._paused: bool = False
+
+        self._pending: list[str] = []
+        self._lock = threading.Lock()
+        self._reader_done = threading.Event()
 
     # ------------------------------------------------------------------
     # Thread management
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the worker on a daemon thread (does not block)."""
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        threading.Thread(target=self._flush_loop, daemon=True).start()
+
+    @property
+    def is_alive(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def _log(self, line: str) -> None:
+        with self._lock:
+            self._pending.append(line)
+
+    def _flush(self) -> None:
+        with self._lock:
+            lines, self._pending = self._pending, []
+        if lines:
+            self.api.push_log({"lines": lines})
+
+    def _flush_loop(self) -> None:
+        while not self._reader_done.is_set():
+            time.sleep(LOG_FLUSH_SECS)
+            self._flush()
+        self._flush()
 
     def _run(self) -> None:
-        """Worker thread body — runs entirely on the background thread."""
+        try:
+            self._run_inner()
+        finally:
+            self._reader_done.set()
+
+    def _run_inner(self) -> None:
         env = os.environ.copy()
         env.update(self._typed.build_env_overrides())
-
-        # Ensure Python stdout is line-buffered even when piped.
         env["PYTHONUNBUFFERED"] = "1"
 
-        python_exe = self._typed.python_exe or "python"
-        pipeline_dir = self._typed.pipeline_dir
+        python_exe = self._typed.effective_python_exe()
+        pipeline_dir = self._typed.effective_pipeline_dir()
+        script = os.path.join(pipeline_dir, "verify_colleges.py")
+
+        os.makedirs(DATA_DIR, exist_ok=True)
+        try:
+            os.remove(STOP_FILE)
+        except OSError:
+            pass
+
+        if not os.path.isfile(script):
+            self._reader_done.set()
+            self.api.push_error({"message": f"The pipeline was not found at:\n  {script}\n\nReinstall MAHABOCW or fix the pipeline folder under Settings → Advanced."})
+            return
 
         try:
             self._proc = subprocess.Popen(
-                [python_exe, "verify_colleges.py"],
-                cwd=pipeline_dir,
+                [python_exe, script],
+                cwd=DATA_DIR,
                 env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,   # merge stderr into stdout
+                stderr=subprocess.STDOUT,
                 text=True,
-                encoding="utf-8",           # explicit UTF-8 avoids cp1252 mojibake
-                errors="replace",           # never crash on undecodable bytes
-                bufsize=1,                  # line-buffered
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=_CREATE_NO_WINDOW,
             )
         except FileNotFoundError:
-            self.api.push_error({
-                "message": (
-                    f"Could not find Python interpreter:\n  {python_exe}\n\n"
-                    "Check the 'Python Interpreter' path in Settings."
-                )
-            })
+            self.api.push_error({"message": f"Could not find the Python runtime:\n  {python_exe}\n\nReinstall MAHABOCW or fix the interpreter under Settings → Advanced."})
             return
         except Exception as exc:
             self.api.push_error({"message": f"Failed to launch pipeline:\n{exc}"})
             return
 
-        # ----------------------------------------------------------------
-        # Character-by-character stdout reader.
-        #
-        # Why not the simpler "for line in self._proc.stdout"?
-        # Python's file iterator only yields a line once it hits \n or EOF.
-        # The pipeline's  input("Press ENTER here …")  writes its prompt
-        # string WITHOUT a trailing newline — it just sits in the pipe
-        # buffer, the iterator never yields it, LOGIN_PROMPT_MARKER never
-        # fires, and the "Continue" button never appears.
-        #
-        # Reading one character at a time lets us check the growing buffer
-        # before a newline arrives, so we catch the input() prompt promptly.
-        # ----------------------------------------------------------------
+        # Character-level reader: input()'s prompt has no trailing newline, so
+        # a line iterator would never see it (needed for the legacy fallback).
         buffer = ""
         while True:
             ch = self._proc.stdout.read(1)
-            if ch == "":          # EOF — subprocess closed stdout
+            if ch == "":
                 break
-            buffer += ch
-
             if ch in ("\n", "\r"):
-                # Completed line — process and reset buffer.
-                line = buffer.rstrip("\r\n")
+                line, buffer = buffer, ""
+                if line.strip():
+                    self._handle_line(_strip_ansi(line))
+                continue
+            buffer += ch
+            if not self._login_emitted and LOGIN_PROMPT_MARKER in buffer:
+                self._log(_strip_ansi(buffer))
+                self._emit_login()
                 buffer = ""
-                if not line:
-                    continue
-                self.api.push_log({"line": _strip_ansi(line)})
 
-                # Detect human-in-the-loop pause (emitted only once).
-                if not self._login_emitted and LOGIN_PROMPT_MARKER in line:
-                    self._login_emitted = True
-                    self.api.push_awaiting_login()
-
-                # Track per-claim progress via Acknowledgement: lines.
-                if ACK_LINE_RE.search(line):
-                    self._claims_seen += 1
-                    self.api.push_progress({
-                        "count": self._claims_seen,
-                        "total": self._total_rows,
-                    })
-            else:
-                # No newline yet — check the in-progress buffer.
-                # input()'s prompt will never produce a newline, so this is
-                # the only way to catch LOGIN_PROMPT_MARKER in that case.
-                if not self._login_emitted and LOGIN_PROMPT_MARKER in buffer:
-                    self._login_emitted = True
-                    self.api.push_log({"line": _strip_ansi(buffer)})
-                    self.api.push_awaiting_login()
-                    buffer = ""   # consumed — don't re-emit when \n arrives
-
-        # Flush any partial line left in the buffer at EOF.
-        if buffer:
-            self.api.push_log({"line": _strip_ansi(buffer)})
+        if buffer.strip():
+            self._handle_line(_strip_ansi(buffer))
 
         returncode = self._proc.wait()
+        self._reader_done.set()
+        self._flush()
+        try:
+            os.remove(STOP_FILE)
+        except OSError:
+            pass
 
         if self._cancel_requested:
-            self.api.push_error({"message": "Run cancelled by user."})
+            self.api.push_error({"message": "Run force-stopped. Progress saved before the stop is kept; the next run resumes from there."})
+        elif self._preflight_problems:
+            self.api.push_error({"message": "The run could not start:\n\n• " + "\n• ".join(self._preflight_problems)})
         elif returncode == 0:
             self.api.push_done({
                 "claims_seen": self._claims_seen,
                 "output_file": self._typed.output_file,
+                "summary": self._summary,
+                "stopped": self._stopped_cleanly,
             })
         else:
-            self.api.push_error({
-                "message": (
-                    f"Pipeline exited with code {returncode}.\n"
-                    "Check the log pane above for details."
-                )
-            })
+            self.api.push_error({"message": f"The pipeline stopped with an error (exit code {returncode}).\nSee the log above for details."})
+
+    # ------------------------------------------------------------------
+    # Line / event handling
+    # ------------------------------------------------------------------
+
+    def _emit_login(self) -> None:
+        if not self._login_emitted:
+            self._login_emitted = True
+            self._flush()
+            self.api.push_awaiting_login()
+
+    def _handle_line(self, line: str) -> None:
+        if line.startswith(EVENT_PREFIX):
+            try:
+                event = json.loads(line[len(EVENT_PREFIX):])
+            except json.JSONDecodeError:
+                self._log(line)
+                return
+            self._uses_events = True
+            self._handle_event(event)
+            return
+
+        self._log(line)
+
+        if not self._login_emitted and LOGIN_PROMPT_MARKER in line:
+            self._emit_login()
+        if not self._uses_events and ACK_LINE_RE.search(line):
+            self._claims_seen += 1
+            self.api.push_progress({"count": self._claims_seen, "total": self._total_rows})
+
+    def _handle_event(self, event: dict) -> None:
+        name = event.get("event")
+        if name == "awaiting_login":
+            self._emit_login()
+            return
+        if name == "run_start":
+            self._run_started = True
+            if event.get("total") is not None:
+                self._total_rows = event["total"]
+        elif name in ("claim_done", "claim_skipped"):
+            self._claims_seen = int(event.get("n") or self._claims_seen + 1)
+            self.api.push_progress({"count": self._claims_seen, "total": self._total_rows})
+        elif name == "run_end":
+            self._summary = event.get("summary")
+            self._stopped_cleanly = bool(event.get("stopped"))
+        elif name == "preflight_failed":
+            self._preflight_problems = list(event.get("problems") or [])
+        self._flush()
+        self.api.push_event(event)
 
     # ------------------------------------------------------------------
     # Control methods — safe to call from any thread
     # ------------------------------------------------------------------
 
     def confirm_login(self) -> None:
-        """
-        Send a newline to the pipeline's stdin to unblock the input() call.
-        Call this when the user clicks 'I've logged in — Continue'.
-        """
         if self._proc and self._proc.stdin:
             try:
                 self._proc.stdin.write("\n")
@@ -228,52 +258,75 @@ class PipelineRunner:
                 pass
 
     def pause(self) -> None:
-        """Suspend all threads of the pipeline process (Windows: SuspendThread)."""
         if self._proc:
             try:
                 psutil.Process(self._proc.pid).suspend()
+                self._paused = True
             except psutil.Error:
                 pass
 
     def resume(self) -> None:
-        """Resume a previously suspended pipeline process."""
         if self._proc:
             try:
                 psutil.Process(self._proc.pid).resume()
+                self._paused = False
             except psutil.Error:
                 pass
 
-    def cancel(self) -> None:
+    def stop(self) -> None:
         """
-        Request cancellation.  Sets the flag first so push_error carries
-        'cancelled' rather than the raw exit code.
+        Graceful stop: ask the pipeline to finish the current claim, save, and
+        exit.  Before the claim loop has started (e.g. while waiting for the
+        portal login) there is nothing to finish, so this force-stops.
+        """
+        if not self._run_started:
+            self.force_stop()
+            return
+        self._stop_requested = True
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(STOP_FILE, "w", encoding="utf-8") as fh:
+                fh.write("stop")
+        except OSError:
+            self.force_stop()
+            return
+        if self._paused:
+            self.resume()
 
-        Playwright's Chromium runs as a child process of the pipeline's
-        python.exe.  Terminating just the parent abruptly (instead of letting
-        the ``with sync_playwright()`` block exit normally) leaves an orphaned
-        chrome.exe behind.  Kill the full process tree to avoid accumulating
-        zombie browser processes across cancel/resume sessions.
-        """
+    def force_stop(self) -> None:
+        """Terminate the pipeline and every child (Playwright's chrome.exe)."""
         self._cancel_requested = True
-        if self._proc:
-            try:
-                parent = psutil.Process(self._proc.pid)
-                children = parent.children(recursive=True)
-                for child in children:
-                    child.terminate()
-                parent.terminate()
-                psutil.wait_procs(children, timeout=3)
-            except psutil.Error:
-                pass
+        if not self._proc:
+            return
+        try:
+            parent = psutil.Process(self._proc.pid)
+            procs = parent.children(recursive=True) + [parent]
+            for p in procs:
+                try:
+                    p.resume()  # a suspended process can't handle termination cleanly
+                except psutil.Error:
+                    pass
+            for p in procs:
+                try:
+                    p.terminate()
+                except psutil.Error:
+                    pass
+            _, alive = psutil.wait_procs(procs, timeout=FORCE_STOP_WAIT_SECS)
+            for p in alive:
+                try:
+                    p.kill()
+                except psutil.Error:
+                    pass
+        except psutil.Error:
+            pass
 
-    # ------------------------------------------------------------------
-    # Accessors
-    # ------------------------------------------------------------------
+    # Back-compat alias.
+    cancel = force_stop
 
     @property
     def claims_seen(self) -> int:
         return self._claims_seen
 
     @property
-    def is_running_proc(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+    def stop_requested(self) -> bool:
+        return self._stop_requested
