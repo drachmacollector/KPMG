@@ -1,66 +1,45 @@
-import pandas as pd
-from playwright.sync_api import sync_playwright
-import time
-import re
 import os
-import urllib.request
-import urllib.error
-import socket
-from tqdm import tqdm
-from bs4 import BeautifulSoup
-from document_processor import normalize_document
-from document_processor import calculate_sha256
-from logger_config import logger
 
-from ocr_engine import ocr_image
-from extractor import extract_information, is_satisfactory
-from web_resolver import resolve_institution
+# Force protobuf pure-Python implementation so that PaddlePaddle's older
+# protobuf requirement and google-genai's newer requirement don't collide at
+# the C++ extension layer.  Must be set before ANY module imports protobuf.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+import re
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import socket
+
+import pandas as pd
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from tqdm import tqdm
+
+from logger_config import emit_event, logger
+from scoring import compute_accuracy
 
 load_dotenv()
-
-
-excel_file = os.environ["MAHABOCW_INPUT_FILE"]
-target_sheet_name = os.environ["MAHABOCW_SHEET_NAME"]
-output_excel_file = os.environ["MAHABOCW_OUTPUT_FILE"]
-
-process_all = os.environ.get("EXCEL_PROCESS_ALL", "false").lower() == "true"
-
-start_row_env = os.environ.get("EXCEL_START_ROW")
-end_row_env = os.environ.get("EXCEL_END_ROW")
-
-start_row = int(start_row_env) if start_row_env else None
-end_row = int(end_row_env) if end_row_env else None
 
 # Rows with accuracy below this threshold are flagged for manual review.
 ACCURACY_THRESHOLD = 80
 
+# Values written to the `online_verification_status` column.
+STATUS_VERIFIED = "VERIFIED"   # web resolution succeeded
+STATUS_FAILED = "FAILED"       # documents read, but web resolution failed
+STATUS_NO_DOCS = "NO_DOCS"     # no relevant document could be extracted
+STATUS_ERROR = "ERROR"         # portal / processing error — always retried
+TERMINAL_STATUSES = {STATUS_VERIFIED, STATUS_FAILED, STATUS_NO_DOCS}
 
-logger.debug("[*] Initializing MAHABOCW Verification Engine...")
-with tqdm(total=2, desc="Initialization", bar_format="{l_bar}{bar:20}|", colour="green") as pbar:
-    # output_excel_file is already read from environment variables above
-    if os.path.exists(output_excel_file):
-        excel_info = pd.ExcelFile(output_excel_file)
-        logger.debug(f"Found existing output file. Sheets: {excel_info.sheet_names}")
-        pbar.update(1)
+ACK_COLUMN = "acknowledgement_no"
 
-        logger.debug(f"Reading data from sheet: '{target_sheet_name}'...")
-        df = pd.read_excel(output_excel_file, sheet_name=target_sheet_name)
-    else:
-        excel_info = pd.ExcelFile(excel_file)
-        logger.debug(f"Sheets found in your Excel file: {excel_info.sheet_names}")
-        pbar.update(1)
+DOWNLOAD_TIMEOUT_SECS = 60
+GRID_WAIT_SECS = 20
 
-        logger.debug(f"Reading data from sheet: '{target_sheet_name}'...")
-        df = pd.read_excel(excel_file, sheet_name=target_sheet_name)
-        
-    df.columns = df.columns.str.strip()
-    
-    logger.debug("Columns Pandas actually sees:")
-    logger.debug(df.columns.tolist())
-    pbar.update(1)
-
-cols_to_init = [
+OUTPUT_COLUMNS = [
     'corrected_college_name',
     'corrected_college_address',
     'accuracy',
@@ -68,23 +47,107 @@ cols_to_init = [
     'online_verification_status'
 ]
 
-for col in cols_to_init:
-    if col not in df.columns:
-        df[col] = ""
-    # Explicitly enforce string dtype to prevent float64 rejection on empty columns
-    df[col] = df[col].fillna("").astype(str)
+# ---------------------------------------------------------------------------
+# Priority / fallback document groups
+# ---------------------------------------------------------------------------
+PRIORITY_DOCS = ["bonafide", "college_id"]
 
+FALLBACK_DOCS = [
+    "aadhaar",
+    "ration",
+    "self_declaration",
+    "education_self_declaration",
+]
+
+_TTY = sys.stdout.isatty()
+
+
+def _env_flag(name, default="false"):
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Excel I/O
+# ---------------------------------------------------------------------------
+
+def normalize_ack(value):
+    """Return the acknowledgement number as a clean string ('' if missing)."""
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        if pd.isna(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+    text = str(value).strip()
+    if text.lower() in ("nan", "none"):
+        return ""
+    # Integers that went through a float column come back as "12345.0".
+    if re.fullmatch(r"\d+\.0", text):
+        text = text[:-2]
+    return text
+
+
+def load_sheet(path, sheet_name):
+    """Read one sheet, keeping the acknowledgement column as text."""
+    with pd.ExcelFile(path) as xls:
+        logger.debug(f"Sheets found in {path}: {xls.sheet_names}")
+        if sheet_name not in xls.sheet_names:
+            raise SystemExit(
+                f"Sheet '{sheet_name}' was not found in {os.path.basename(path)}. "
+                f"Available sheets: {', '.join(xls.sheet_names)}"
+            )
+        header = xls.parse(sheet_name, nrows=0)
+        dtype = {c: str for c in header.columns if str(c).strip() == ACK_COLUMN}
+        df = xls.parse(sheet_name, dtype=dtype)
+
+    df.columns = df.columns.str.strip()
+    if ACK_COLUMN not in df.columns:
+        raise SystemExit(f"Column '{ACK_COLUMN}' was not found in sheet '{sheet_name}'.")
+
+    for col in OUTPUT_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+        # Explicitly enforce string dtype to prevent float64 rejection on empty columns
+        df[col] = df[col].fillna("").astype(str)
+    return df
+
+
+def save_with_retry(df, filename, sheet_name):
+    """
+    Atomically write the sheet: write a temp file, then os.replace() it over
+    the output.  A forced stop or crash mid-write can therefore never leave a
+    truncated/corrupt output workbook behind.
+    """
+    root, _ = os.path.splitext(filename)
+    tmp_path = f"{root}.saving.xlsx"
+    while True:
+        try:
+            df.to_excel(tmp_path, sheet_name=sheet_name, index=False)
+            os.replace(tmp_path, filename)
+            logger.info("[OK] Progress Saved\n")
+            return
+        except PermissionError:
+            logger.info("- Output Excel file is currently open. Close it — retrying in 5s...")
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------
 
 def download_document(url, save_path):
     retries = 3
     delays = [2, 4]  # Wait 2s, then 4s on failures.
-    
+
     for attempt in range(retries):
         try:
-            urllib.request.urlretrieve(url, save_path)
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECS) as resp, open(save_path, "wb") as out:
+                shutil.copyfileobj(resp, out)
             logger.debug(f"Downloaded: {save_path}")
             return True
-        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
+        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout, TimeoutError, ConnectionError) as e:
             if attempt < len(delays):
                 wait_time = delays[attempt]
                 logger.debug(f"- Retry {attempt + 1}/{len(delays)} for {os.path.basename(save_path)} in {wait_time}s ({e})")
@@ -94,111 +157,20 @@ def download_document(url, save_path):
         except Exception as e:
             logger.error(f"Download failed unexpectedly: {e}")
             break
-            
+
     return False
 
 
-def save_with_retry(df, filename, sheet_name):
-    while True:
-        try:
-            df.to_excel(
-                filename,
-                sheet_name=sheet_name,
-                index=False
-            )
-            logger.info("[OK] Progress Saved\n")
-            return
-        except PermissionError:
-            logger.info("- Output Excel file is currently open. Retrying...")
-            time.sleep(5)
+def _url_extension(url):
+    path = urllib.parse.urlparse(url).path
+    ext = os.path.splitext(path)[1].lower()
+    return ext if re.fullmatch(r"\.[a-z0-9]{2,5}", ext or "") else ""
 
 
-os.makedirs("downloads", exist_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# ACCURACY SCORING
-# ---------------------------------------------------------------------------
-
-def compute_accuracy(ocr_metrics_list, llm_result, resolved=None):
-    """
-    Compute a programmatic accuracy score (0-100) from objective signals.
-
-    Parameters
-    ----------
-    ocr_metrics_list : list[dict]
-        One dict per processed page, each containing:
-          avg_confidence, min_confidence, high_conf_ratio, line_count,
-          is_relevant (bool — True only if the LLM identified the page as
-          a Bonafide Certificate or Student Identity Card).
-        (as returned by ocr_and_extract).
-    llm_result : dict | None
-        The best LLM extraction result for the claim.
-    resolved : dict | None
-        The dict returned by resolve_institution().  If provided and
-        resolution_failed is False, the verification bonus is granted
-        as a graduated score based on match_confidence.
-
-    Returns
-    -------
-    int
-        Accuracy score 0-100.
-
-    Scoring breakdown (100 points total):
-      OCR avg_confidence              (30 pts max)
-        avg_conf * 30                 -> 0-30 pts   (linear, capped)
-
-      Web Verification confidence     (40 pts max)
-        round((match_confidence/100) * 40)  -> 0-40 pts  (graduated)
-        e.g. 100% match = 40 pts, 75% match = 30 pts, failed = 0 pts
-        Cache hits receive match_confidence=100 -> full 40 pts
-
-      Cross-Document Agreement        (30 pts max)
-        >= 2 docs with is_relevant=True  -> 30 pts  (full bonus)
-        exactly 1 doc with is_relevant=True -> 15 pts (partial)
-        no relevant docs                 ->  0 pts
-        NOTE: Aadhaar, Ration Card, Self Declaration are readable but
-        NOT relevant — they do not count toward this score.
-    """
-    # --- Component 1: OCR confidence (30 pts) ---
-    if ocr_metrics_list:
-        avg_conf = sum(m["avg_confidence"] for m in ocr_metrics_list) / len(ocr_metrics_list)
-    else:
-        avg_conf = 0.0
-
-    ocr_score = min(round(avg_conf * 30), 30)
-
-    # --- Component 2: Graduated web verification score (40 pts) ---
-    if resolved is not None and not resolved.get("resolution_failed", True):
-        match_confidence = resolved.get("match_confidence", 0)
-        verification_score = round((match_confidence / 100) * 40)
-    else:
-        verification_score = 0
-
-    # --- Component 3: Cross-document agreement (30 pts) ---
-    # Only pages identified as Bonafide or Student ID by the LLM count.
-    # Irrelevant but readable docs (Aadhaar, Ration Card, Self Declaration must NOT contribute to this score.
-    relevant_docs = sum(
-        1 for m in ocr_metrics_list
-        if m.get("is_relevant") and m.get("line_count", 0) > 0
-    )
-    if relevant_docs >= 2:
-        cross_doc_score = 30
-    elif relevant_docs == 1:
-        cross_doc_score = 15
-    else:
-        cross_doc_score = 0
-
-    total = min(ocr_score + verification_score + cross_doc_score, 100)
-    return total
-
-
-# ---------------------------------------------------------------------------
-# Download a subset of documents and return pages for those successfully
-# normalised. Deduplication is handled via SHA-256.
-# ---------------------------------------------------------------------------
 def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, processed_hashes):
     """Download `doc_subset` keys from `documents`, normalize, return page list."""
+    from document_processor import calculate_sha256, normalize_document, sniff_extension
+
     new_pages = []
     skipped = []
     downloaded_count = 0
@@ -210,37 +182,47 @@ def download_and_normalize(doc_subset, documents, claim_folder, pages_folder, pr
             continue
 
         logger.debug(f"[*] Downloading {doc_type.replace('_', ' ').title()}...")
-        extension = url.split("?")[0].split(".")[-1]
-        output_path = os.path.join(claim_folder, f"{doc_type}.{extension}")
+        tmp_path = os.path.join(claim_folder, f"{doc_type}.download")
 
-        if not download_document(url, output_path):
+        if not download_document(url, tmp_path):
             continue
+
+        # Name the file by its real type (portal URLs don't always carry one).
+        extension = sniff_extension(tmp_path) or _url_extension(url) or ".bin"
+        filename = f"{doc_type}{extension}"
+        output_path = os.path.join(claim_folder, filename)
+        os.replace(tmp_path, output_path)
 
         logger.info(f"[OK] {doc_type.replace('_', ' ').title()} downloaded")
 
         file_hash = calculate_sha256(output_path)
         if file_hash in processed_hashes:
-            logger.debug(f"Duplicate skipped: {doc_type}.{extension}")
+            logger.debug(f"Duplicate skipped: {filename}")
             continue
 
-        processed_hashes[file_hash] = f"{doc_type}.{extension}"
+        processed_hashes[file_hash] = filename
         downloaded_count += 1
 
-        pages = normalize_document(
-            output_path,
-            pages_folder,
-            os.path.splitext(f"{doc_type}.{extension}")[0]
-        )
+        pages = normalize_document(output_path, pages_folder, doc_type)
         new_pages.extend(pages)
-        logger.debug(f"{doc_type}.{extension} -> {len(pages)} page(s)")
+        logger.debug(f"{filename} -> {len(pages)} page(s)")
 
-    if skipped:
-        for skip_doc in skipped:
-            logger.info(f"- {skip_doc} not uploaded")
+    for skip_doc in skipped:
+        logger.info(f"- {skip_doc} not uploaded")
     if downloaded_count > 0:
         logger.debug(f"[*] Downloaded {downloaded_count}/{len(doc_subset)} documents")
 
     return new_pages
+
+
+# ---------------------------------------------------------------------------
+# OCR + extraction
+# ---------------------------------------------------------------------------
+
+def _document_of(page_path):
+    """'.../bonafide_page001.png' -> 'bonafide'."""
+    base = os.path.splitext(os.path.basename(page_path))[0]
+    return base.rsplit("_page", 1)[0]
 
 
 def ocr_and_extract(page_paths):
@@ -252,11 +234,13 @@ def ocr_and_extract(page_paths):
     tuple(dict | None, list[dict])
         (best_result, all_ocr_metrics)
         best_result      — best LLM result (bonafide preferred over student_id)
-        all_ocr_metrics  — list of per-page OCR metric dicts for accuracy scoring.
-                           Each dict includes 'is_relevant' (bool): True only
-                           when the LLM identified the page as a Bonafide
-                           Certificate or Student Identity Card.
+        all_ocr_metrics  — list of per-page OCR metric dicts for accuracy
+                           scoring, including 'document', 'is_relevant' and
+                           'college_name'.
     """
+    from extractor import extract_information
+    from ocr_engine import ocr_image
+
     bonafide_result = None
     student_id_result = None
     all_ocr_metrics = []
@@ -268,13 +252,14 @@ def ocr_and_extract(page_paths):
 
         ocr_result = ocr_image(page)
 
-        # Collect metrics for every page; is_relevant will be filled in below
         page_metrics = {
+            "document":        _document_of(page),
             "avg_confidence":  ocr_result["avg_confidence"],
             "min_confidence":  ocr_result["min_confidence"],
             "high_conf_ratio": ocr_result["high_conf_ratio"],
             "line_count":      ocr_result["line_count"],
             "is_relevant":     False,   # default; updated if LLM confirms relevance
+            "college_name":    "",
         }
         all_ocr_metrics.append(page_metrics)
 
@@ -299,50 +284,49 @@ def ocr_and_extract(page_paths):
 
         logger.debug(f"{result}")
 
-        # Backfill is_relevant onto the metrics entry for this page
-        if result.get("relevant"):
-            page_metrics["is_relevant"] = True
-            doc_type_display = result["document_type"].replace('_', ' ').title()
-            logger.info(f"[OK] Relevant document: {doc_type_display}")
-
         if not result.get("relevant"):
             continue
 
-        if result["document_type"] == "bonafide":
+        page_metrics["is_relevant"] = True
+        page_metrics["college_name"] = (result.get("college_name") or "").strip()
+        doc_type_display = str(result.get("document_type", "document")).replace('_', ' ').title()
+        logger.info(f"[OK] Relevant document: {doc_type_display}")
+
+        if result.get("document_type") == "bonafide":
             if bonafide_result is None:
                 bonafide_result = result
-
-        elif result["document_type"] == "student_id":
+        elif result.get("document_type") == "student_id":
             if student_id_result is None:
                 student_id_result = result
 
     best_result = bonafide_result or student_id_result
-    
+
     if best_result:
         logger.debug("College extracted successfully.")
     else:
         logger.info("- No relevant document found")
-        
+
     return best_result, all_ocr_metrics
 
 
 def write_result(df, index, best_result, ocr_metrics):
-    """Write extraction result and accuracy score into the dataframe row."""
+    """
+    Write extraction result and accuracy score into the dataframe row.
+    Returns a summary dict for the GUI event stream.
+    """
+    from web_resolver import resolve_institution
+
     resolved = None
+    status = STATUS_NO_DOCS
 
     if best_result and best_result.get("relevant"):
         college_name    = (best_result.get("college_name")    or "").strip()
         college_address = (best_result.get("college_address") or "").strip()
 
-        # ------------------------------------------------------------------
-        # Online Institution Resolution
-        # Pass the noisy Qwen output through the web resolver to get the
-        # verified official name and address.  On any failure the resolver
-        # returns the original values and sets resolution_failed=True.
-        # ------------------------------------------------------------------
         try:
             logger.info(f"\nOCR/Qwen Extracted Name: {college_name}")
             logger.info("\nVerifying College via LLM Search...")
+            emit_event("claim_step", step="verifying")
             resolved = resolve_institution(
                 extracted_name=college_name,
                 extracted_address=college_address,
@@ -363,267 +347,376 @@ def write_result(df, index, best_result, ocr_metrics):
 
         df.loc[index, "corrected_college_name"]    = verified_name.upper()
         df.loc[index, "corrected_college_address"] = verified_address.upper()
-        df.loc[index, "online_verification_status"] = "FAILED" if resolved.get("resolution_failed") else ""
+        status = STATUS_FAILED if resolved.get("resolution_failed") else STATUS_VERIFIED
+
+    df.loc[index, "online_verification_status"] = status
 
     accuracy = compute_accuracy(ocr_metrics, best_result, resolved)
     df.loc[index, "accuracy"] = f"{accuracy}%"
 
     # Flag for manual review when accuracy is below the threshold
     # OR when no usable result was obtained at all.
-    needs_review = (accuracy < ACCURACY_THRESHOLD) or (not best_result) or (not best_result.get("relevant"))
+    needs_review = (accuracy < ACCURACY_THRESHOLD) or status != STATUS_VERIFIED
     df.loc[index, "manual_review"] = "YES" if needs_review else ""
 
-    if resolved and not resolved.get("resolution_failed"):
-        v_name = (resolved.get("verified_college_name") or "").upper()
-        v_addr = (resolved.get("verified_college_address") or "").upper()
-        logger.info(f"\n[OK] College Verified")
-        logger.info(v_name)
-        if v_addr:
-            logger.info(v_addr)
-        logger.info(f"\nAccuracy: {accuracy}%")
-        logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
+    if status == STATUS_VERIFIED:
+        logger.info("\n[OK] College Verified")
+        logger.info(df.loc[index, "corrected_college_name"])
+        if df.loc[index, "corrected_college_address"]:
+            logger.info(df.loc[index, "corrected_college_address"])
     else:
-        logger.info(f"\n[FAILED] Resolution Failed\n")
-        logger.info(f"Accuracy: {accuracy}%")
-        logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
+        logger.info("\n[FAILED] Resolution Failed\n" if status == STATUS_FAILED else "\n[FAILED] No usable document\n")
+    logger.info(f"\nAccuracy: {accuracy}%")
+    logger.info(f"Manual Review: {'Yes' if needs_review else 'No'}\n")
+
+    return {
+        "status": status,
+        "accuracy": accuracy,
+        "manual_review": needs_review,
+        "college": df.loc[index, "corrected_college_name"],
+        "via_cache": bool(resolved and resolved.get("via_cache")),
+    }
 
 
 # ---------------------------------------------------------------------------
-# Priority / fallback document groups
+# Portal helpers
 # ---------------------------------------------------------------------------
-PRIORITY_DOCS = ["bonafide", "college_id"]
 
-FALLBACK_DOCS = [
-    "aadhaar",
-    "ration",
-    "self_declaration",
-    "education_self_declaration",
-]
+# Collects the text of every rendered ag-grid row, grouping pinned/centre
+# containers by row-index, and reports how many rows mention the ack number
+# as a whole token.
+_GRID_CHECK_JS = """
+(ack) => {
+  const esc = ack.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+  const re = new RegExp('(^|[^A-Za-z0-9])' + esc + '([^A-Za-z0-9]|$)');
+  const byIdx = {};
+  document.querySelectorAll('.ag-row').forEach(r => {
+    const i = r.getAttribute('row-index') || r.getAttribute('row-id') || Math.random();
+    byIdx[i] = (byIdx[i] || '') + ' ' + (r.innerText || '');
+  });
+  const texts = Object.values(byIdx);
+  return { count: texts.length, matching: texts.filter(t => re.test(t)).length };
+}
+"""
 
 
-# 2. Start Browser Automation
-with sync_playwright() as p:
-    # no_viewport=True allows you to maximize the window safely without breaking the site!  
-    browser = p.chromium.launch(headless=False)
-    context = browser.new_context(no_viewport=True)
-    page = context.new_page()
+def wait_for_filtered_grid(page, ack_no, timeout_secs=GRID_WAIT_SECS):
+    """
+    Wait until the claims grid shows ONLY rows for `ack_no`.
 
-    page.goto(
-        "https://iwbms.mahabocw.in/sso",
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
+    Replaces the old fixed sleep(3): if the grid had not refreshed yet, the
+    first "View claim form" belonged to the PREVIOUS claim and its documents
+    were written against the wrong acknowledgement number.
+    """
+    deadline = time.time() + timeout_secs
+    last = None
+    while time.time() < deadline:
+        try:
+            last = page.evaluate(_GRID_CHECK_JS, ack_no)
+            if last["count"] > 0 and last["matching"] == last["count"]:
+                return True
+        except Exception as e:
+            logger.debug(f"Grid check failed: {e}")
+        time.sleep(0.5)
+    logger.debug(f"Grid never settled on {ack_no}: {last}")
+    return False
 
-    # --- THE HUMAN HANDOFF ---
-    logger.info("\n------------------------------------------------------------\n")
-    logger.info("Human Setup Required")
-    logger.info("- Preferably don't maximize or resize the window")
-    logger.info("- Log in manually")
-    logger.info("- Click on the 'Claims' section")
-    logger.info("- Drag the 'Acknowledgement Number' column into view")
-    logger.info("- Click the 3 bars on the column, click the funnel, and leave the text box open\n")
 
-    input("Press ENTER here in the terminal when you are ready to start the loop...")
-    logger.debug("Starting automated extraction...")
+def extract_document_links(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    documents = {}
+    for label in soup.find_all("label"):
+        text = label.get_text(" ", strip=True).lower()
+        a = label.find_next("a", href=True)
+        if not a:
+            continue
+        href = urllib.parse.urljoin(base_url, a["href"])
+
+        if "education self declaration" in text:
+            documents["education_self_declaration"] = href
+        elif "bonafide certificate" in text:
+            documents["bonafide"] = href
+        elif "college identity" in text:
+            documents["college_id"] = href
+        elif "aadhaar card" in text:
+            documents["aadhaar"] = href
+        elif "ration card" in text:
+            documents["ration"] = href
+        elif (
+            text.startswith("5. self declaration")
+            or ("self declaration" in text and "education self declaration" not in text)
+        ):
+            documents["self_declaration"] = href
+    return documents
+
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+def preflight():
+    """Fail fast with a clear message instead of silently failing every claim."""
+    from extractor import check_ollama_ready
+
+    problems = []
+    ok, msg = check_ollama_ready()
+    if not ok:
+        problems.append(msg)
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        problems.append("GEMINI_API_KEY is not set. Enter your Gemini API key in Settings.")
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    excel_file = os.environ["MAHABOCW_INPUT_FILE"]
+    target_sheet_name = os.environ["MAHABOCW_SHEET_NAME"]
+    output_excel_file = os.environ["MAHABOCW_OUTPUT_FILE"]
+
+    process_all = _env_flag("EXCEL_PROCESS_ALL")
+    retry_failed = _env_flag("MAHABOCW_RETRY_FAILED")
+    delete_downloads = _env_flag("MAHABOCW_DELETE_DOWNLOADS")
+    stop_file = os.environ.get("MAHABOCW_STOP_FILE", "").strip()
+
+    start_row_env = os.environ.get("EXCEL_START_ROW")
+    end_row_env = os.environ.get("EXCEL_END_ROW")
+    start_row = int(start_row_env) if start_row_env else None
+    end_row = int(end_row_env) if end_row_env else None
+
+    if os.path.normcase(os.path.abspath(excel_file)) == os.path.normcase(os.path.abspath(output_excel_file)):
+        raise SystemExit("The output file must be different from the input file (the input would be overwritten).")
+    if not process_all and (start_row is None or end_row is None):
+        raise SystemExit("Range mode needs both EXCEL_START_ROW and EXCEL_END_ROW.")
+
+    if stop_file and os.path.exists(stop_file):
+        os.remove(stop_file)
+
+    problems = preflight()
+    if problems:
+        for p in problems:
+            logger.error(p)
+        emit_event("preflight_failed", problems=problems)
+        sys.exit(2)
+
+    logger.debug("[*] Initializing MAHABOCW Verification Engine...")
+    source = output_excel_file if os.path.exists(output_excel_file) else excel_file
+    logger.debug(f"Reading data from {source} sheet '{target_sheet_name}'...")
+    df = load_sheet(source, target_sheet_name)
+    logger.debug(f"Columns: {df.columns.tolist()}")
+
+    # Load OCR (slow) only after the cheap checks have passed.
+    import ocr_engine  # noqa: F401
+
+    os.makedirs("downloads", exist_ok=True)
 
     if process_all:
         rows_to_process = df
     else:
         # GUI spinboxes emit 1-indexed spreadsheet row numbers (min=2 = first
         # data row).  pd.read_excel strips the header, so df.iloc[0] maps to
-        # spreadsheet row 2.  Convert: spreadsheet_row → df_index = row - 2.
-        # The end bound is exclusive in iloc, so end_row - 1 gives the correct
-        # inclusive upper limit (spreadsheet row N → df.iloc[N-2]).
-        rows_to_process = df.iloc[start_row - 2 : end_row - 1]
-    
-    with tqdm(
-        total=len(rows_to_process),
-        desc="Overall Progress",
-        bar_format="{l_bar}{bar:20}| {n_fmt}/{total_fmt}",
-        colour="green"
-    ) as main_pbar:
-        for index, row in rows_to_process.iterrows():
-            ack_no = str(row['acknowledgement_no']).strip()
+        # spreadsheet row 2.  The end bound is exclusive in iloc, so end_row - 1
+        # gives the correct inclusive upper limit.
+        rows_to_process = df.iloc[start_row - 2: end_row - 1]
 
-            claim_folder = os.path.join("downloads", ack_no)
-            os.makedirs(claim_folder, exist_ok=True)
+    total = len(rows_to_process)
+    summary = {s: 0 for s in (STATUS_VERIFIED, STATUS_FAILED, STATUS_NO_DOCS, STATUS_ERROR)}
+    summary.update({"skipped": 0, "manual_review": 0, "cache_hits": 0, "processed": 0})
+    stopped = False
 
-            # Skip already processed rows
-            if (
-                pd.notna(row["corrected_college_name"])
-                and str(row["corrected_college_name"]).strip()
-            ):
-                logger.debug(f"Row {ack_no} already processed, skipping.")
-                main_pbar.update(1)
-                continue
+    from playwright.sync_api import sync_playwright
 
-            logger.info("\n------------------------------------------------------------\n")
-            logger.info("Claim")
-            logger.info(f"Acknowledgement: {ack_no}\n")
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=False)
+        except Exception as e:
+            msg = f"Could not start the Chromium browser: {e}"
+            logger.error(msg)
+            emit_event("preflight_failed", problems=[msg])
+            sys.exit(2)
+        context = browser.new_context(no_viewport=True)
+        page = context.new_page()
 
-            try:
-                # --- FILTER MENU HANDLING ---
-                filter_box = page.locator('input[type="text"]:visible').first
-    
-                if not filter_box.is_visible(timeout=2000):
-                    ack_header = page.locator('.ag-header-cell', has_text=re.compile(r"acknowledgement", re.IGNORECASE)).first
-                    ack_header.hover()
-                    ack_header.locator('.ag-icon-menu').first.click()
-                    time.sleep(1)
-    
-                # 1. Type the new number
-                filter_box.fill(ack_no)
-    
-                # 2. Click Apply Filter
-                page.locator('button').filter(has_text="Apply").first.click()
-                logger.debug("Filtering through claims...")
-                time.sleep(3)
-    
-            # --- NEW TAB HANDLING ---
-                with context.expect_page() as new_page_info:
-                    page.locator('a, button').filter(has_text="View claim form").first.click()
-    
-                new_page = new_page_info.value
-    
-                # Wait for page to finish loading
-                logger.debug("Claim form opened")
-                new_page.wait_for_selector("label", timeout=20000)
-                time.sleep(1)
-    
-                html = new_page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                labels = soup.find_all("label")
-                documents = {}
-    
-                for label in labels:
-                    text = label.get_text(" ", strip=True).lower()
-                    a = label.find_next("a", href=True)
-    
-                    if not a:
-                        continue
-    
-                    if "education self declaration" in text:
-                        documents["education_self_declaration"] = a["href"]
-                    elif "bonafide certificate" in text:
-                        documents["bonafide"] = a["href"]
-                    elif "college identity" in text:
-                        documents["college_id"] = a["href"]
-                    elif "aadhaar card" in text:
-                        documents["aadhaar"] = a["href"]
-                    elif "ration card" in text:
-                        documents["ration"] = a["href"]
-                    elif (
-                        text.startswith("5. self declaration")
-                        or (
-                            "self declaration" in text
-                            and "education self declaration" not in text
-                        )
-                    ):
-                        documents["self_declaration"] = a["href"]
-    
-                logger.info("Documents Found")
-                for doc_key in documents.keys():
-                    doc_display = doc_key.replace('_', ' ').title()
-                    logger.info(f"[OK] {doc_display}")
-                logger.info("\nDownloading Documents...")
-    
-                pages_folder = os.path.join(claim_folder, "pages")
-                os.makedirs(pages_folder, exist_ok=True)
-    
-                # Shared deduplication tracker across both phases
-                processed_hashes = {}
-    
-                # Accumulate OCR metrics across both phases for accuracy scoring
-                all_ocr_metrics = []
-    
-                # ---------------------------------------------------------------
-                # PHASE 1 — Fast path: Bonafide + College ID only
-                # ---------------------------------------------------------------
-                logger.debug("[Phase 1] Trying priority documents (Bonafide + College ID)...")
+        page.goto("https://iwbms.mahabocw.in/sso", wait_until="domcontentloaded", timeout=60000)
+
+        # --- THE HUMAN HANDOFF ---
+        logger.info("\n------------------------------------------------------------\n")
+        logger.info("Human Setup Required")
+        logger.info("- Preferably don't maximize or resize the window")
+        logger.info("- Log in manually")
+        logger.info("- Click on the 'Claims' section")
+        logger.info("- Drag the 'Acknowledgement Number' column into view")
+        logger.info("- Click the 3 bars on the column, click the funnel, and leave the text box open\n")
+
+        emit_event("awaiting_login")
+        input("Press ENTER here in the terminal when you are ready to start the loop...")
+        logger.debug("Starting automated extraction...")
+        emit_event("run_start", total=total)
+
+        with tqdm(total=total, desc="Overall Progress", bar_format="{l_bar}{bar:20}| {n_fmt}/{total_fmt}",
+                  colour="green", disable=not _TTY) as main_pbar:
+            for n, (index, row) in enumerate(rows_to_process.iterrows(), start=1):
+                if stop_file and os.path.exists(stop_file):
+                    logger.info("\nStop requested — finishing cleanly.")
+                    stopped = True
+                    break
+
+                ack_no = normalize_ack(row[ACK_COLUMN])
+                status_now = str(row.get("online_verification_status", "")).strip().upper()
+                has_name = bool(str(row["corrected_college_name"]).strip())
+
+                skip_reason = None
+                if not ack_no:
+                    skip_reason = "missing acknowledgement number"
+                elif status_now in TERMINAL_STATUSES or (has_name and status_now != STATUS_ERROR):
+                    if not (retry_failed and status_now in (STATUS_FAILED, STATUS_NO_DOCS)):
+                        skip_reason = "already processed"
+
+                if skip_reason:
+                    logger.debug(f"Row {ack_no or index}: {skip_reason}, skipping.")
+                    summary["skipped"] += 1
+                    emit_event("claim_skipped", n=n, total=total, ack=ack_no, reason=skip_reason)
+                    main_pbar.update(1)
+                    continue
+
+                logger.info("\n------------------------------------------------------------\n")
+                logger.info("Claim")
+                logger.info(f"Acknowledgement: {ack_no}\n")
+                emit_event("claim_start", n=n, total=total, ack=ack_no)
+
+                claim_folder = os.path.join("downloads", ack_no)
+                os.makedirs(claim_folder, exist_ok=True)
+                new_page = None
+                result_info = None
+
                 try:
-                    phase1_pages = download_and_normalize(
-                        PRIORITY_DOCS, documents, claim_folder, pages_folder, processed_hashes
-                    )
-                except Exception as e:
-                    logger.error(f"Phase 1 document processing failed: {e}")
-                    phase1_pages = []
-    
-                best_result = None
-    
-                if phase1_pages:
-                    logger.debug(f"[Phase 1] Found {len(phase1_pages)} page(s) to process.")
+                    # --- FILTER MENU HANDLING ---
+                    emit_event("claim_step", step="finding claim")
+                    filter_box = page.locator('input[type="text"]:visible').first
+                    if filter_box.count() == 0 or not filter_box.is_visible():
+                        ack_header = page.locator('.ag-header-cell', has_text=re.compile(r"acknowledgement", re.IGNORECASE)).first
+                        ack_header.hover()
+                        ack_header.locator('.ag-icon-menu').first.click()
+                        time.sleep(1)
+
+                    filter_box.fill(ack_no)
+                    page.locator('button').filter(has_text="Apply").first.click()
+                    logger.debug("Filtering through claims...")
+
+                    if not wait_for_filtered_grid(page, ack_no):
+                        raise RuntimeError(f"Claims grid did not show acknowledgement {ack_no} (not found, or the filter did not apply)")
+
+                    # --- NEW TAB HANDLING ---
+                    with context.expect_page() as new_page_info:
+                        page.locator('a, button').filter(has_text="View claim form").first.click()
+                    new_page = new_page_info.value
+
+                    logger.debug("Claim form opened")
+                    new_page.wait_for_selector("label", timeout=20000)
+                    time.sleep(1)
+
+                    html = new_page.content()
+                    if ack_no not in html:
+                        logger.warning(f"Acknowledgement {ack_no} not visible on the claim form; relying on the filtered grid match.")
+                    documents = extract_document_links(html, new_page.url)
+
+                    logger.info("Documents Found")
+                    for doc_key in documents:
+                        logger.info(f"[OK] {doc_key.replace('_', ' ').title()}")
+                    logger.info("\nDownloading Documents...")
+
+                    pages_folder = os.path.join(claim_folder, "pages")
+                    os.makedirs(pages_folder, exist_ok=True)
+                    processed_hashes = {}
+                    all_ocr_metrics = []
+
+                    # PHASE 1 — Fast path: Bonafide + College ID only
+                    emit_event("claim_step", step="downloading")
+                    logger.debug("[Phase 1] Trying priority documents (Bonafide + College ID)...")
                     try:
-                        best_result, phase1_metrics = ocr_and_extract(phase1_pages)
-                        all_ocr_metrics.extend(phase1_metrics)
+                        phase1_pages = download_and_normalize(PRIORITY_DOCS, documents, claim_folder, pages_folder, processed_hashes)
                     except Exception as e:
-                        logger.error(f"Phase 1 OCR/Extraction failed: {e}")
-    
-                if is_satisfactory(best_result):
-                    logger.debug("[Phase 1] SUCCESS - satisfactory result obtained.")
-                    write_result(df, index, best_result, all_ocr_metrics)
-    
-                else:
-                    # ---------------------------------------------------------------
-                    # PHASE 2 — Fallback: download remaining documents
-                    #            Reuse already-OCR'd Phase 1 pages (no duplicate OCR)
-                    # ---------------------------------------------------------------
-                    logger.debug("[Phase 1] Result unsatisfactory. Triggering fallback...")
-                    logger.debug("[Phase 2] Downloading fallback documents...")
-    
-                    try:
-                        phase2_new_pages = download_and_normalize(
-                            FALLBACK_DOCS, documents, claim_folder, pages_folder, processed_hashes
-                        )
-                    except Exception as e:
-                        logger.error(f"Phase 2 document processing failed: {e}")
-                        phase2_new_pages = []
-    
-                    if phase2_new_pages:
-                        logger.debug(f"[Phase 2] Found {len(phase2_new_pages)} new page(s) to process.")
+                        logger.error(f"Phase 1 document processing failed: {e}")
+                        phase1_pages = []
+
+                    from extractor import is_satisfactory
+                    best_result = None
+                    if phase1_pages:
+                        emit_event("claim_step", step="reading documents")
                         try:
-                            phase2_result, phase2_metrics = ocr_and_extract(phase2_new_pages)
-                            all_ocr_metrics.extend(phase2_metrics)
+                            best_result, phase1_metrics = ocr_and_extract(phase1_pages)
+                            all_ocr_metrics.extend(phase1_metrics)
                         except Exception as e:
-                            logger.error(f"Phase 2 OCR/Extraction failed: {e}")
-                            phase2_result = None
-    
-                        # Prefer Phase 2 result if satisfactory; else keep Phase 1 result
-                        if is_satisfactory(phase2_result):
-                            best_result = phase2_result
-                            logger.debug("[Phase 2] SUCCESS - satisfactory result from fallback docs.")
-                        elif phase2_result and phase2_result.get("relevant"):
-                            if not is_satisfactory(best_result):
+                            logger.error(f"Phase 1 OCR/Extraction failed: {e}")
+
+                    if not is_satisfactory(best_result):
+                        # PHASE 2 — Fallback documents (Phase 1 pages are not re-OCR'd)
+                        logger.debug("[Phase 1] Result unsatisfactory. Triggering fallback...")
+                        emit_event("claim_step", step="downloading fallback documents")
+                        try:
+                            phase2_new_pages = download_and_normalize(FALLBACK_DOCS, documents, claim_folder, pages_folder, processed_hashes)
+                        except Exception as e:
+                            logger.error(f"Phase 2 document processing failed: {e}")
+                            phase2_new_pages = []
+
+                        if phase2_new_pages:
+                            emit_event("claim_step", step="reading fallback documents")
+                            try:
+                                phase2_result, phase2_metrics = ocr_and_extract(phase2_new_pages)
+                                all_ocr_metrics.extend(phase2_metrics)
+                            except Exception as e:
+                                logger.error(f"Phase 2 OCR/Extraction failed: {e}")
+                                phase2_result = None
+
+                            if is_satisfactory(phase2_result):
                                 best_result = phase2_result
-                            logger.debug("[Phase 2] Partial result - using best available.")
+                            elif phase2_result and phase2_result.get("relevant") and not is_satisfactory(best_result):
+                                best_result = phase2_result
                         else:
-                            logger.debug("[Phase 2] No improvement from fallback docs.")
+                            logger.debug("[Phase 2] No new pages could be downloaded/normalised.")
                     else:
-                        logger.debug("[Phase 2] No new pages could be downloaded/normalised.")
-    
-                    write_result(df, index, best_result, all_ocr_metrics)
-    
-                save_with_retry(
-                    df,
-                    output_excel_file,
-                    target_sheet_name
-                )
-    
+                        logger.debug("[Phase 1] SUCCESS - satisfactory result obtained.")
+
+                    result_info = write_result(df, index, best_result, all_ocr_metrics)
+
+                except Exception as e:
+                    logger.error(f"Error processing {ack_no}: {e}")
+                    df.loc[index, "online_verification_status"] = STATUS_ERROR
+                    df.loc[index, "manual_review"] = "YES"
+                    result_info = {"status": STATUS_ERROR, "accuracy": 0, "manual_review": True,
+                                   "college": "", "via_cache": False, "error": str(e)}
+                finally:
+                    if new_page is not None:
+                        try:
+                            new_page.close()
+                        except Exception:
+                            pass
+
+                save_with_retry(df, output_excel_file, target_sheet_name)
                 logger.debug(f"Saved progress after {ack_no}")
-    
-                # Close the claim form tab
-                new_page.close()
-                main_pbar.update(1)
-    
-            except Exception as e:
-                logger.error(f"Error processing {ack_no}: {e}")
-                main_pbar.update(1)
-                continue
 
-save_with_retry(
-    df,
-    output_excel_file,
-    target_sheet_name
-)
+                if delete_downloads:
+                    shutil.rmtree(claim_folder, ignore_errors=True)
 
-logger.debug("Done.")
-logger.debug(f"Output saved to {output_excel_file}")
+                summary[result_info["status"]] += 1
+                summary["processed"] += 1
+                if result_info["manual_review"]:
+                    summary["manual_review"] += 1
+                if result_info.get("via_cache"):
+                    summary["cache_hits"] += 1
+                emit_event("claim_done", n=n, total=total, ack=ack_no, **result_info)
+                main_pbar.update(1)
+
+    save_with_retry(df, output_excel_file, target_sheet_name)
+    if stop_file and os.path.exists(stop_file):
+        os.remove(stop_file)
+
+    emit_event("run_end", stopped=stopped, total=total, output_file=output_excel_file, summary=summary)
+    logger.debug("Done.")
+    logger.debug(f"Output saved to {output_excel_file}")
+
+
+if __name__ == "__main__":
+    main()
