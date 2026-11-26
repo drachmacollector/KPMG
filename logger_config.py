@@ -1,9 +1,7 @@
 import logging
 import os
 import sys
-from datetime import datetime
 
-# Define custom log levels (if needed) or just use standard ones
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 

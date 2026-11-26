@@ -27,7 +27,7 @@ def _relevant_documents(ocr_metrics_list):
     return docs
 
 
-def compute_accuracy(ocr_metrics_list, llm_result=None, resolved=None):
+def compute_accuracy(ocr_metrics_list, resolved=None):
     """
     Compute a programmatic accuracy score (0-100) from objective signals.
 
@@ -37,9 +37,6 @@ def compute_accuracy(ocr_metrics_list, llm_result=None, resolved=None):
         One dict per processed page with keys avg_confidence, line_count,
         is_relevant (bool), and optionally document (str, source document id)
         and college_name (str, LLM-extracted name for that page).
-    llm_result : dict | None
-        The best LLM extraction result for the claim (unused by the formula;
-        kept for call-site compatibility).
     resolved : dict | None
         Output of resolve_institution().
 

@@ -283,7 +283,7 @@ def parse_llm_json(content):
     }
 
 
-def check_ollama_ready(host_timeout=5):
+def check_ollama_ready():
     """
     Preflight: confirm the Ollama server is reachable and MODEL is pulled.
     Returns (ok: bool, message: str).

@@ -34,10 +34,6 @@ from app.settings import DATA_DIR, STOP_FILE, Settings
 
 EVENT_PREFIX = "@@MAHABOCW "
 
-# Fallbacks for an older pipeline that does not emit events.
-LOGIN_PROMPT_MARKER = "Press ENTER here"
-ACK_LINE_RE = re.compile(r"Acknowledgement:\s*(\S+)")
-
 # Strip ANSI colour/style escape sequences.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
@@ -64,10 +60,8 @@ class PipelineRunner:
         self._proc: Optional[subprocess.Popen] = None
         self._claims_seen: int = 0
         self._cancel_requested: bool = False
-        self._stop_requested: bool = False
         self._login_emitted: bool = False
         self._run_started: bool = False
-        self._uses_events: bool = False
         self._summary: Optional[dict] = None
         self._stopped_cleanly: bool = False
         self._preflight_problems: list = []
@@ -153,26 +147,12 @@ class PipelineRunner:
             self.api.push_error({"message": f"Failed to launch pipeline:\n{exc}"})
             return
 
-        # Character-level reader: input()'s prompt has no trailing newline, so
-        # a line iterator would never see it (needed for the legacy fallback).
-        buffer = ""
-        while True:
-            ch = self._proc.stdout.read(1)
-            if ch == "":
-                break
-            if ch in ("\n", "\r"):
-                line, buffer = buffer, ""
-                if line.strip():
-                    self._handle_line(_strip_ansi(line))
-                continue
-            buffer += ch
-            if not self._login_emitted and LOGIN_PROMPT_MARKER in buffer:
-                self._log(_strip_ansi(buffer))
-                self._emit_login()
-                buffer = ""
-
-        if buffer.strip():
-            self._handle_line(_strip_ansi(buffer))
+        # The pipeline emits "awaiting_login" (with a newline) before it blocks
+        # on input(), so plain line iteration never misses the login prompt.
+        for raw in self._proc.stdout:
+            line = _strip_ansi(raw.rstrip("\r\n"))
+            if line.strip():
+                self._handle_line(line)
 
         returncode = self._proc.wait()
         self._reader_done.set()
@@ -220,17 +200,10 @@ class PipelineRunner:
             except json.JSONDecodeError:
                 self._log(line)
                 return
-            self._uses_events = True
             self._handle_event(event)
             return
 
         self._log(line)
-
-        if not self._login_emitted and LOGIN_PROMPT_MARKER in line:
-            self._emit_login()
-        if not self._uses_events and ACK_LINE_RE.search(line):
-            self._claims_seen += 1
-            self.api.push_progress({"count": self._claims_seen, "total": self._total_rows})
 
     def _handle_event(self, event: dict) -> None:
         name = event.get("event")
@@ -289,7 +262,6 @@ class PipelineRunner:
         if not self._run_started:
             self.force_stop()
             return
-        self._stop_requested = True
         try:
             os.makedirs(DATA_DIR, exist_ok=True)
             with open(STOP_FILE, "w", encoding="utf-8") as fh:
@@ -326,14 +298,3 @@ class PipelineRunner:
                     pass
         except psutil.Error:
             pass
-
-    # Back-compat alias.
-    cancel = force_stop
-
-    @property
-    def claims_seen(self) -> int:
-        return self._claims_seen
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_requested

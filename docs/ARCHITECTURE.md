@@ -284,7 +284,7 @@ When frozen, the install root is the parent of the exe folder, and it counts onl
 | Python | `{root}\runtime\python.exe` |
 | `PLAYWRIGHT_BROWSERS_PATH` | `{root}\browsers` |
 
-In development (not frozen) the defaults are the repo root and `python`. `C:\ProgramData\MAHABOCW\pipeline` (the old two-installer layout) is still recognized. The Settings screen offers overrides only under **Advanced**.
+In development (not frozen) the defaults are the repo root and `python`. A stored pipeline folder that no longer contains `verify_colleges.py` (e.g. from the old two-installer layout) is ignored, so detection takes over. The Settings screen offers overrides only under **Advanced**.
 
 ## B3. Bridge (`Api`)
 
@@ -298,7 +298,7 @@ In development (not frozen) the defaults are the repo root and `python`. `C:\Pro
 | `start_pipeline(dict)` | command | Refuses if a run is already alive. Returns `{ok, total_rows}`. |
 | `pause_pipeline()` / `resume_pipeline()` | command | psutil suspend / resume |
 | `stop_pipeline()` | command | Graceful: writes the stop file. Before the claim loop has started, it force-stops instead. |
-| `force_stop_pipeline()` (`cancel_pipeline` alias) | command | Terminate the process tree, then kill survivors after 5 s |
+| `force_stop_pipeline()` | command | Terminate the process tree, then kill survivors after 5 s |
 | `confirm_login()` | command | Sends a newline to the pipeline's stdin |
 | `open_file`, `open_log`, `open_folder(which)`, `open_url`, `install_ollama`, `start_ollama` | command | Shell helpers. `open_url` only opens allow-listed URLs. |
 | `pull_model()` | command | Streams Ollama `/api/pull` progress as `model-pull` events |
@@ -317,7 +317,7 @@ Push events are sent as JSON → UTF-8 → base64, then `evaluate_js` dispatches
 | `pipeline-error` | `{message}`: non-zero exit, preflight problems, force stop, or launch failure |
 | `model-pull` | `{status, completed, total, done, error?}` |
 
-`input()` prompts have no trailing newline, so the runner reads stdout character by character. It also splits an event glued onto the prompt line, and still recognizes the legacy `Press ENTER here` / `Acknowledgement:` text from older pipelines.
+The runner reads stdout line by line; the pipeline emits `awaiting_login` (with a newline) before it blocks on `input()`. The `input()` prompt itself has no trailing newline, so the next event arrives glued to it. The runner splits such lines at the `@@MAHABOCW ` prefix. The GUI and pipeline always ship together, so there is no fallback for pipelines that do not emit events.
 
 ## B4. Screens
 

@@ -8,7 +8,7 @@ Every public method is callable from React via window.pywebview.api.method(...)
   PULL      get_initial_state, get_sheet_names, test_python, system_check
   DIALOG    pick_pipeline_folder, pick_input_file, pick_output_file, pick_python_exe
   COMMAND   save_settings, start_pipeline, pause_pipeline, resume_pipeline,
-            stop_pipeline (graceful), force_stop_pipeline, cancel_pipeline (alias),
+            stop_pipeline (graceful), force_stop_pipeline,
             confirm_login, open_file, open_log, open_folder, open_url,
             start_ollama, pull_model
   PUSH      push_log, push_event, push_progress, push_done, push_error,
@@ -132,7 +132,6 @@ class Api:
         return {
             "settings": load_settings(),
             "environment": environment_info(),
-            "running": self.is_running(),
         }
 
     def is_running(self) -> bool:
@@ -305,9 +304,6 @@ class Api:
         if self._runner:
             self._runner.force_stop()
 
-    def cancel_pipeline(self) -> None:
-        self.force_stop_pipeline()
-
     def confirm_login(self) -> None:
         if self._runner:
             self._runner.confirm_login()
@@ -322,7 +318,7 @@ class Api:
         os.makedirs(target, exist_ok=True)
         os.startfile(target)
 
-    def open_log(self, _pipeline_dir: str = "") -> None:
+    def open_log(self) -> None:
         """Open the most recent .log file from the data folder's logs/."""
         log_files = glob.glob(os.path.join(DATA_DIR, "logs", "*.log"))
         if log_files:

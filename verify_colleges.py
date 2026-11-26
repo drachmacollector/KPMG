@@ -351,7 +351,7 @@ def write_result(df, index, best_result, ocr_metrics):
 
     df.loc[index, "online_verification_status"] = status
 
-    accuracy = compute_accuracy(ocr_metrics, best_result, resolved)
+    accuracy = compute_accuracy(ocr_metrics, resolved)
     df.loc[index, "accuracy"] = f"{accuracy}%"
 
     # Flag for manual review when accuracy is below the threshold

@@ -156,7 +156,7 @@ def normalize_orientation(image_path):
     angle = _find_best_rotation(image_path)
 
     if angle == 0:
-        logger.debug(f"[Rotation] Best angle is 0° — no rotation needed.")
+        logger.debug("[Rotation] Best angle is 0° — no rotation needed.")
         return
 
     img = cv2.imread(image_path)

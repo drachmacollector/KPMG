@@ -38,9 +38,6 @@ DATA_DIR: str = os.path.join(
 )
 STOP_FILE: str = os.path.join(DATA_DIR, ".stop_requested")
 
-# Location used by the old, separate MAHABOCW-Pipeline-Setup.exe.
-LEGACY_PIPELINE_DIR: str = r"C:\ProgramData\MAHABOCW\pipeline"
-
 _SECRET_FIELDS = ("gemini_api_key", "openrouter_api_key")
 _DPAPI_PREFIX = "dpapi:"
 
@@ -63,8 +60,6 @@ def default_pipeline_dir() -> str:
     root = install_root()
     if root:
         return os.path.join(root, "pipeline")
-    if os.path.isfile(os.path.join(LEGACY_PIPELINE_DIR, "verify_colleges.py")):
-        return LEGACY_PIPELINE_DIR
     # Development: the repo root (gui/app/settings.py -> repo root).
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if os.path.isfile(os.path.join(repo_root, "verify_colleges.py")):
@@ -199,10 +194,13 @@ class Settings:
                 for key in _SECRET_FIELDS:
                     if key in data:
                         data[key] = unprotect_secret(data[key] or "")
-                # The old GUI stored "python" as its default; treat that as "auto".
+                # Settings written by older versions pointed at "python" and at
+                # a pipeline folder that may no longer exist; treat both as
+                # "detect automatically".
                 if data.get("python_exe") == "python":
                     data["python_exe"] = ""
-                if data.get("pipeline_dir") == LEGACY_PIPELINE_DIR and install_root():
+                stored_dir = data.get("pipeline_dir") or ""
+                if stored_dir and not os.path.isfile(os.path.join(stored_dir, "verify_colleges.py")):
                     data["pipeline_dir"] = ""
                 return cls.from_dict(data)
             except (json.JSONDecodeError, TypeError, OSError):

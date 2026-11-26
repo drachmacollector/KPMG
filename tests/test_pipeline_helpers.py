@@ -83,26 +83,26 @@ OK = {"resolution_failed": False, "match_confidence": 100}
 def test_two_agreeing_documents_get_full_cross_doc_score():
     pages = [_page("bonafide", "Govt Medical College Nagpur"),
              _page("college_id", "Government Medical College, Nagpur")]
-    assert scoring.compute_accuracy(pages, None, OK) == 27 + 40 + 30
+    assert scoring.compute_accuracy(pages, OK) == 27 + 40 + 30
 
 
 def test_two_pages_of_one_document_count_once():
     pages = [_page("bonafide", "X"), _page("bonafide", "X")]
-    assert scoring.compute_accuracy(pages, None, OK) == 27 + 40 + 15
+    assert scoring.compute_accuracy(pages, OK) == 27 + 40 + 15
 
 
 def test_disagreeing_documents_get_no_cross_doc_score():
     pages = [_page("bonafide", "Alpha Dental College"), _page("college_id", "Zeta Ayurved Institute")]
-    assert scoring.compute_accuracy(pages, None, OK) == 27 + 40
+    assert scoring.compute_accuracy(pages, OK) == 27 + 40
 
 
 def test_irrelevant_pages_do_not_dilute_ocr_score():
     pages = [_page("bonafide", "X", conf=1.0), _page("aadhaar", "", conf=0.0, relevant=False)]
-    assert scoring.compute_accuracy(pages, None, None) == 30 + 0 + 15
+    assert scoring.compute_accuracy(pages, None) == 30 + 0 + 15
 
 
 def test_failed_resolution_scores_no_verification_points():
-    assert scoring.compute_accuracy([], None, {"resolution_failed": True, "match_confidence": 90}) == 0
+    assert scoring.compute_accuracy([], {"resolution_failed": True, "match_confidence": 90}) == 0
 
 
 # --- extractor ------------------------------------------------------------
