@@ -1,22 +1,28 @@
-# requirements-lock.txt  (GPU / dev machine)
-# Manually curated from the actual imports in the codebase.
-# Compatible with Python 3.12 and 3.13 (and 3.11 if still installed).
-# Regenerate by running the app, not by `pip freeze` (which captures the entire venv).
+# requirements-lock.txt — pipeline dependencies (CPU and GPU installs)
+#
+# Install order (what gui/packaging/setup_runtime.cmd does):
+#   1. pip install -r requirements-lock.txt
+#   2. pip install --no-deps -r requirements-paddle-cpu.txt   (or -gpu)
+#
+# Why two steps: paddlepaddle 2.6.2 declares protobuf<=3.20.2 on Windows, but
+# google-genai needs protobuf 5.x.  pip cannot resolve both in one install
+# (ResolutionImpossible), so Paddle is installed with --no-deps; its other
+# dependencies (httpx, numpy, Pillow, decorator, astor, opt-einsum) are pinned
+# here.  At runtime the conflict is harmless because
+# PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python is set in verify_colleges.py.
+#
+# Python 3.12 only: paddlepaddle 2.6.2 and numpy 1.26 have no Python 3.13
+# wheels.  The installer ships its own Python 3.12 runtime.
 #
 # Direct dependencies:
-#   verify_colleges.py  -> pandas, playwright, beautifulsoup4, tqdm, python-dotenv
+#   verify_colleges.py    -> pandas, playwright, beautifulsoup4, tqdm, python-dotenv
 #   document_processor.py -> PyMuPDF, opencv-python, Pillow
-#   extractor.py        -> ollama
-#   ocr_engine.py       -> paddlepaddle-gpu, paddleocr<3.0, tqdm
-#   web_resolver.py     -> google-genai, rapidfuzz, python-dotenv
-#   gui/app/runner.py   -> psutil, pywebview
-#   gui/app/main.py     -> pywebview
+#   extractor.py          -> ollama
+#   ocr_engine.py         -> paddlepaddle (separate file), paddleocr<3.0, tqdm
+#   web_resolver.py       -> google-genai, rapidfuzz, python-dotenv
+#   scoring.py            -> rapidfuzz
 #
-# NOTE: paddlepaddle-gpu is the GPU wheel used on the dev machine.
-#       For client/CPU-only machines use requirements-lock-cpu.txt instead.
-# NOTE: paddlepaddle-gpu 2.6.2 requires protobuf<=3.20.2 but google-genai needs
-#       protobuf>=5.x.  Resolved via PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-#       set in ocr_engine.py before any protobuf import.
+# The GUI's own dependencies are in gui/requirements.txt (not needed here).
 
 # ---------------------------------------------------------------------------
 # Core pipeline — direct imports
@@ -31,21 +37,16 @@ Pillow==12.2.0
 ollama==0.6.2
 tqdm==4.68.3
 paddleocr==2.7.3
-paddlepaddle-gpu==2.6.2
 google-genai==2.10.0
 rapidfuzz==3.14.5
 python-dotenv==1.2.2
 
 # ---------------------------------------------------------------------------
-# NVIDIA CUDA runtime (GPU mode — dev machine only)
+# PaddleOCR / PaddlePaddle transitive dependencies
+# (paddlepaddle itself is installed separately with --no-deps — see header)
 # ---------------------------------------------------------------------------
-nvidia-cublas-cu11==11.11.3.6
-nvidia-cuda-nvrtc-cu11==11.8.89
-nvidia-cudnn-cu11==8.9.4.25
-
-# ---------------------------------------------------------------------------
-# PaddleOCR transitive dependencies
-# ---------------------------------------------------------------------------
+astor==0.8.1
+opt-einsum==3.3.0
 numpy==1.26.4
 shapely==2.1.2
 pyclipper==1.4.0
@@ -132,15 +133,6 @@ urllib3==2.7.0
 certifi==2026.6.17
 charset-normalizer==3.4.7
 idna==3.18
-
-# ---------------------------------------------------------------------------
-# GUI (pywebview + pythonnet + psutil)
-# pywebview uses the OS-native Edge WebView2 runtime on Windows.
-# pythonnet is required by pywebview's edgechromium backend on Windows.
-# ---------------------------------------------------------------------------
-pywebview>=5.0
-pythonnet>=3.0
-psutil==7.2.2
 
 # ---------------------------------------------------------------------------
 # Logging / progress

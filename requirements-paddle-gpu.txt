@@ -1,0 +1,10 @@
+# PaddlePaddle, NVIDIA GPU build (CUDA 11.8 / cuDNN 8).  Install AFTER
+# requirements-lock.txt with:
+#   pip install --no-deps -r requirements-paddle-gpu.txt
+# (see the header of requirements-lock.txt for why --no-deps is required)
+# Requires an NVIDIA GPU and a recent NVIDIA driver; ocr_engine.py falls back
+# to CPU when no GPU is visible.
+paddlepaddle-gpu==2.6.2
+nvidia-cublas-cu11==11.11.3.6
+nvidia-cuda-nvrtc-cu11==11.8.89
+nvidia-cudnn-cu11==8.9.4.25

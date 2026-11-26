@@ -1,0 +1,4 @@
+# PaddlePaddle, CPU build.  Install AFTER requirements-lock.txt with:
+#   pip install --no-deps -r requirements-paddle-cpu.txt
+# (see the header of requirements-lock.txt for why --no-deps is required)
+paddlepaddle==2.6.2
