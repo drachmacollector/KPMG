@@ -15,6 +15,11 @@
 .PARAMETER Python
   Python used to run PyInstaller. It needs gui/requirements.txt + pyinstaller.
 
+.PARAMETER RuntimeArchive
+  Optional path to an already-downloaded python-build-standalone archive
+  (cpython-<RuntimeVersion>+<RuntimeTag>-x86_64-pc-windows-msvc-install_only.tar.gz).
+  It is still checked against the release's SHA256SUMS when that is reachable.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File gui\packaging\build.ps1 -Python .\gui_venv\Scripts\python.exe
 #>
@@ -24,12 +29,15 @@ param(
     [string]$RuntimeTag = "20261124",
     [string]$RuntimeVersion = "3.12.16",
     [string]$Iscc = "",
+    [string]$RuntimeArchive = "",
     [switch]$SkipFrontend,
     [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Windows PowerShell 5.1 defaults to TLS 1.0/1.1, which GitHub rejects.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Packaging = $PSScriptRoot
 $Gui       = Split-Path $Packaging -Parent
@@ -78,6 +86,10 @@ New-Item -ItemType Directory -Force $Cache | Out-Null
 $asset   = "cpython-$RuntimeVersion+$RuntimeTag-x86_64-pc-windows-msvc-install_only.tar.gz"
 $baseUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$RuntimeTag"
 $archive = Join-Path $Cache $asset
+if ($RuntimeArchive) {
+    if (-not (Test-Path $RuntimeArchive)) { throw "RuntimeArchive not found: $RuntimeArchive" }
+    Copy-Item $RuntimeArchive $archive -Force
+}
 if (-not (Test-Path $archive)) {
     Write-Host "Downloading $asset"
     Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$([uri]::EscapeDataString($asset))" -OutFile $archive
@@ -113,10 +125,12 @@ if (-not $Iscc) {
     $candidates = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
         "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     )
     $Iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $Iscc) { throw "ISCC.exe (Inno Setup 6) not found. Install it or pass -Iscc <path>." }
+    if (-not $Iscc) { throw "ISCC.exe (Inno Setup 6 or 7) not found. Install it or pass -Iscc <path>." }
 }
 $env:MAHABOCW_VERSION = $version
 Run $Iscc @("mahabocw_setup.iss") $Packaging
