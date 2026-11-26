@@ -53,7 +53,9 @@ export async function call(method, ...args) {
  * fires, e.detail is already a plain JS object.
  *
  * @param {string}   eventName - One of:
- *   'pipeline-log'            → { line: string }
+ *   'pipeline-log'            → { lines: string[] }  (batched)
+ *   'pipeline-event'          → raw pipeline event { event: string, ... }
+ *   'model-pull'              → { status, completed, total, done, error? }
  *   'pipeline-progress'       → { count: number, total: number | null }
  *   'pipeline-done'           → { claims_seen: number, output_file: string }
  *   'pipeline-error'          → { message: string }

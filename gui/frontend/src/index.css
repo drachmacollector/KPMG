@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+/* Inter is bundled via @fontsource (imported in main.jsx) — no network needed. */
 
 @tailwind base;
 @tailwind components;
@@ -263,6 +263,57 @@ html, body, #root {
     z-index: 10;
   }
 
+
+  /* Keyboard focus (visible only for keyboard users) */
+  .btn:focus-visible, .field:focus-visible, .link-btn:focus-visible,
+  input[type="radio"]:focus-visible, input[type="checkbox"]:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+
+  .field-error { border-color: var(--error-border) !important; }
+  .field-hint  { @apply mt-1.5 text-xs pl-1; color: var(--text-muted); }
+  .field-msg   { @apply mt-1.5 text-xs pl-1; color: var(--error); }
+
+  .link-btn {
+    @apply text-xs font-semibold underline-offset-2 hover:underline cursor-pointer rounded;
+    color: var(--text-accent);
+    background: none;
+    border: none;
+    padding: 0;
+  }
+
+  /* Stat tiles on Run / Done */
+  .stat {
+    @apply rounded-xl px-4 py-3 flex flex-col;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    min-width: 0;
+  }
+  .stat-value { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .stat-label { @apply text-xs mt-1; color: var(--text-secondary); }
+
+  /* Log level colouring */
+  .log-error { color: var(--error); }
+  .log-warn  { color: var(--warning); }
+  .log-ok    { color: var(--success); }
+  .log-gui   { color: var(--text-accent); }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(2, 4, 10, 0.7);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.2s both;
+  }
+  .modal {
+    @apply card p-7;
+    width: 460px;
+    max-width: calc(100vw - 48px);
+    background: var(--bg-surface);
+  }
+
   /* Scrollable pane */
   .scroll-pane {
     @apply overflow-y-auto overflow-x-hidden;
@@ -296,3 +347,22 @@ html, body, #root {
   0%   { left: -30%; width: 30%; }
   100% { left: 100%; width: 30%; }
 }
+@keyframes pulseDot {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* Status dots for the system check (outside @layer: class names are built
+   dynamically, so Tailwind's content scan cannot see them). */
+.status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.status-ok    { background: var(--success); box-shadow: 0 0 8px var(--success-border); }
+.status-warn  { background: var(--warning); }
+.status-error { background: var(--error); box-shadow: 0 0 8px var(--error-border); }
+.status-pending { background: var(--text-muted); animation: pulseDot 1.2s ease-in-out infinite; }
+

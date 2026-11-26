@@ -1,190 +1,82 @@
 /**
- * Done.jsx
+ * Done.jsx — completion screen.
  *
- * Success / completion screen — shown after 'pipeline-done' fires.
- *
- * Receives donePayload from App.jsx, which comes from push_done():
- *   { claims_seen: number, output_file: string }
- *
- * Actions:
- *   1. Open output Excel file (api.open_file)
- *   2. Open latest log file   (api.open_log with pipeline_dir from settings)
- *   3. Run Again              (back to Run screen with same settings)
- *   4. Run Custom Range       (back to Settings to adjust row range)
+ * donePayload (from push_done):
+ *   { claims_seen, output_file, stopped, summary: {VERIFIED, FAILED, NO_DOCS,
+ *     ERROR, skipped, manual_review, cache_hits, processed} | null }
  */
-import { useEffect, useRef } from 'react';
+import { CheckCircle2, FileSpreadsheet, FileText, FolderOpen, RotateCcw, Settings as SettingsIcon, PauseCircle } from 'lucide-react';
 import { call } from '../lib/bridge';
+import { ScreenHeader, Stat } from './ui';
 
-export default function Done({ donePayload, settings, onRunAgain, onCustomRange }) {
-  const cardRef = useRef(null);
+export default function Done({ donePayload, settings, onRunAgain, onSettings }) {
+  const { output_file = '', stopped = false, summary = null, claims_seen = 0 } = donePayload ?? {};
+  const s = summary || {};
+  const failed = (s.FAILED || 0) + (s.NO_DOCS || 0) + (s.ERROR || 0);
+  const review = s.manual_review || 0;
+  const accent = stopped ? 'var(--warning)' : 'var(--success)';
+  const Icon = stopped ? PauseCircle : CheckCircle2;
 
-  // Fade in card on mount
-  useEffect(() => {
-    if (cardRef.current) {
-      cardRef.current.style.animation = 'fadeIn 0.6s cubic-bezier(0.16,1,0.3,1) both';
-    }
-  }, []);
-
-  const { claims_seen = 0, output_file = '' } = donePayload ?? {};
-
-  function openOutput() { call('open_file', output_file); }
-  function openLog()    { call('open_log',  settings?.pipeline_dir ?? ''); }
+  let message;
+  if (!summary) message = `${claims_seen} row${claims_seen === 1 ? '' : 's'} handled. Results are in the output file.`;
+  else if (stopped) message = 'The run was stopped. Everything finished so far is saved; run again to continue.';
+  else if (!s.processed) message = 'No new claims to process: every selected row was already done.';
+  else if (review) message = `${review} claim${review === 1 ? ' needs' : 's need'} manual review. Filter the manual_review column for "YES" in the output file.`;
+  else message = 'All processed claims were verified.';
 
   return (
-    <div className="flex flex-col h-full bg-transparent">
-      {/* Accent top bar — green for done */}
-      <div
-        style={{
-          height: 3,
-          background: 'linear-gradient(90deg, var(--success) 0%, #86efac 100%)',
-          flexShrink: 0,
-        }}
-      />
+    <div className="flex flex-col h-full">
+      <ScreenHeader title={stopped ? 'Run stopped' : 'Run complete'} accent={accent} />
 
-      {/* Header */}
-      <div className="screen-header">
-        {/* Green accent stripe */}
-        <div
-          style={{
-            width: 3,
-            height: 44,
-            borderRadius: 2,
-            background: 'linear-gradient(180deg, var(--success) 0%, #86efac 100%)',
-            flexShrink: 0,
-          }}
-        />
-        <div className="flex-1">
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-0.4px' }}>
-            Run Complete
-          </div>
-        </div>
-        <span
-          className="pill text-xs font-semibold px-3 py-1 rounded-full"
-          style={{
-            color: 'var(--success)',
-            background: 'var(--success-subtle)',
-            border: '1px solid var(--success-border)',
-          }}
-        >
-          Done  ✓
-        </span>
-      </div>
+      <div className="flex-1 scroll-pane flex justify-center py-10 px-6">
+        <div className="card flex flex-col items-center text-center" style={{ width: 620, padding: '44px 44px 36px', animation: 'fadeIn 0.6s cubic-bezier(0.16,1,0.3,1) both' }}>
+          <Icon size={64} strokeWidth={1.5} style={{ color: accent }} aria-hidden />
 
-      {/* Scrollable content */}
-      <div className="flex-1 scroll-pane flex justify-center pt-12 pb-12 px-6">
-        <div
-          ref={cardRef}
-          className="card flex flex-col items-center text-center"
-          style={{ width: 560, padding: '56px 48px 40px' }}
-        >
-          {/* Check icon */}
-          <div
-            className="flex items-center justify-center mb-6"
-            style={{
-              width: 88,
-              height: 88,
-              borderRadius: '50%',
-              background: 'var(--success-subtle)',
-              border: '2px solid var(--success-border)',
-              fontSize: 36,
-              fontWeight: 900,
-              color: 'var(--success)',
-            }}
-          >
-            ✓
-          </div>
-
-          {/* Title */}
-          <h2
-            style={{
-              fontSize: 20,
-              fontWeight: 700,
-              color: '#fff',
-              letterSpacing: '-0.3px',
-              marginBottom: 10,
-            }}
-          >
-            Pipeline Finished Successfully
+          <h2 className="mt-5 mb-2" style={{ fontSize: 20, fontWeight: 700, color: '#fff' }}>
+            {stopped ? 'Stopped safely' : 'Finished'}
           </h2>
+          <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--text-secondary)', maxWidth: 460 }}>{message}</p>
 
-          {/* Subtitle */}
-          <p className="text-sm leading-relaxed mb-2" style={{ color: 'var(--text-secondary)', maxWidth: 400 }}>
-            All records have been verified and saved to the output file.
-          </p>
-
-          {/* Claims count */}
-          {claims_seen > 0 && (
-            <div
-              className="mb-6 px-5 py-2 rounded-full text-sm font-semibold"
-              style={{
-                background: 'var(--accent-subtle)',
-                border: '1px solid var(--border-accent)',
-                color: 'var(--text-accent)',
-              }}
-            >
-              {claims_seen.toLocaleString()} claim{claims_seen !== 1 ? 's' : ''} processed
+          {summary && (
+            <div className="grid grid-cols-4 gap-3 w-full mb-6">
+              <Stat value={s.VERIFIED || 0} label="Verified" color="var(--success)" />
+              <Stat value={review} label="Need review" color={review ? 'var(--warning)' : undefined} />
+              <Stat value={failed} label="Failed" color={failed ? 'var(--error)' : undefined} />
+              <Stat value={s.skipped || 0} label="Already done" />
             </div>
           )}
 
-          {/* Output path */}
           <div className="w-full mb-6 text-left">
-            <div className="section-label mb-2">Output File</div>
-            <div
-              className="text-xs font-mono break-all rounded-xl px-4 py-3"
-              style={{
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-secondary)',
-              }}
-            >
-              {output_file || '—'}
+            <div className="section-label mb-2">Output file</div>
+            <div className="text-xs font-mono break-all rounded-xl px-4 py-3"
+                 style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+              {output_file || settings?.output_file || '—'}
             </div>
           </div>
 
-          {/* Divider */}
-          <div className="w-full mb-6" style={{ height: 1, background: 'var(--border)' }} />
-
-          {/* Primary actions */}
-          <button
-            id="btn-open-output"
-            className="btn-success w-full mb-3"
-            style={{ height: 44, fontSize: 14 }}
-            onClick={openOutput}
-            disabled={!output_file}
-          >
-            📂&nbsp; Open Output File
+          <button id="btn-open-output" type="button" className="btn-success w-full mb-3 gap-2" style={{ height: 46 }}
+                  onClick={() => call('open_file', output_file)} disabled={!output_file} autoFocus>
+            <FileSpreadsheet size={17} aria-hidden /> Open results in Excel
           </button>
+          <div className="grid grid-cols-2 gap-3 w-full mb-6">
+            <button id="btn-open-log" type="button" className="btn gap-2" onClick={() => call('open_log')}>
+              <FileText size={15} aria-hidden /> Log file
+            </button>
+            <button type="button" className="btn gap-2" onClick={() => call('open_folder', 'downloads')}>
+              <FolderOpen size={15} aria-hidden /> Downloaded documents
+            </button>
+          </div>
 
-          <button
-            id="btn-open-log"
-            className="btn w-full mb-6"
-            style={{ height: 44, fontSize: 14 }}
-            onClick={openLog}
-          >
-            📋&nbsp; Open Latest Log File
-          </button>
-
-          {/* Secondary divider */}
           <div className="w-full mb-4" style={{ height: 1, background: 'var(--border)' }} />
 
-          {/* Secondary actions */}
-          <button
-            id="btn-run-again"
-            className="btn-ghost w-full mb-2"
-            style={{ height: 40 }}
-            onClick={onRunAgain}
-          >
-            ↩&nbsp; Run Again &nbsp;(same settings)
-          </button>
-
-          <button
-            id="btn-custom-range"
-            className="btn-ghost w-full"
-            style={{ height: 40 }}
-            onClick={onCustomRange}
-          >
-            ⚙&nbsp; Run on Custom Row Range…
-          </button>
+          <div className="grid grid-cols-2 gap-3 w-full">
+            <button id="btn-run-again" type="button" className="btn-ghost gap-2" onClick={onRunAgain}>
+              <RotateCcw size={15} aria-hidden /> {stopped ? 'Continue the run' : 'Run again'}
+            </button>
+            <button id="btn-custom-range" type="button" className="btn-ghost gap-2" onClick={onSettings}>
+              <SettingsIcon size={15} aria-hidden /> Change settings
+            </button>
+          </div>
         </div>
       </div>
     </div>

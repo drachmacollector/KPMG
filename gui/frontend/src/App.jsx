@@ -3,13 +3,15 @@
  *
  * Root component — owns the screen-level state machine.
  *
- * Flow (strictly linear, no routing needed):
- *   'splash' ──[Launch]──────────────▶ 'settings'
+ *   'splash'   ──[Launch]────────────▶ 'settings'
  *   'settings' ──[Save & Continue]───▶ 'run'
- *   'run' ──[pipeline-done]───────────▶ 'done'
- *   'done' ──[Run Again]──────────────▶ 'run'   (same settings)
- *   'done' ──[Custom Range]───────────▶ 'settings'
- *   'run'  ──[⚙ Settings (no run)]───▶ 'settings'
+ *   'run'      ──[pipeline-done]─────▶ 'done'
+ *   'done'     ──[Run Again]─────────▶ 'run'   (same settings)
+ *   'done'     ──[Change settings]───▶ 'settings'
+ *   'run'      ──[Settings]──────────▶ 'settings'  (only when no run is active)
+ *
+ * runId increases for every launch so the Run screen starts exactly one
+ * pipeline per launch, even under React StrictMode's double-mount in dev.
  */
 import { useState } from 'react';
 import Splash   from './components/Splash';
@@ -21,58 +23,39 @@ export default function App() {
   const [screen,      setScreen]      = useState('splash');
   const [settings,    setSettings]    = useState(null);
   const [donePayload, setDonePayload] = useState(null);
+  const [runId,       setRunId]       = useState(0);
 
-  // Settings → Run: store the validated settings dict and enter Run screen
-  function handleProceed(settingsDict) {
-    setSettings(settingsDict);
+  function startRun(settingsDict) {
+    if (settingsDict) setSettings(settingsDict);
     setDonePayload(null);
+    setRunId(id => id + 1);
     setScreen('run');
   }
 
-  // Run → Done: store the done payload (claims_seen, output_file)
   function handleDone(payload) {
     setDonePayload(payload);
     setScreen('done');
   }
 
-  // Done → Run: run again with exactly the same settings
-  function handleRunAgain() {
-    setDonePayload(null);
-    setScreen('run');
-  }
-
-  // Done → Settings: back to settings so user can change row range
-  function handleCustomRange() {
-    setScreen('settings');
-  }
-
-  // Run → Settings: only allowed when no run is in progress
-  // (the Run screen disables the button while running; this is the handler)
-  function handleGoSettings() {
-    setScreen('settings');
-  }
-
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {screen === 'splash' && (
-        <Splash onLaunch={() => setScreen('settings')} />
-      )}
-      {screen === 'settings' && (
-        <Settings onProceed={handleProceed} />
-      )}
+      {screen === 'splash' && <Splash onLaunch={() => setScreen('settings')} />}
+      {screen === 'settings' && <Settings onProceed={startRun} />}
       {screen === 'run' && (
         <Run
+          key={runId}
+          runId={runId}
           settings={settings}
           onDone={handleDone}
-          onSettings={handleGoSettings}
+          onSettings={() => setScreen('settings')}
         />
       )}
       {screen === 'done' && (
         <Done
           donePayload={donePayload}
           settings={settings}
-          onRunAgain={handleRunAgain}
-          onCustomRange={handleCustomRange}
+          onRunAgain={() => startRun()}
+          onSettings={() => setScreen('settings')}
         />
       )}
     </div>

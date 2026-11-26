@@ -52,3 +52,6 @@ gui/screenshot_03_run.png
 gui/screenshot_04_done.png
 gui/take_screenshots.py
 docs/pywebview_migration_plan.md
+
+# Built frontend (output of `npm run build`, bundled by PyInstaller)
+gui/frontend_dist/
