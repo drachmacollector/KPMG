@@ -43,7 +43,7 @@ Settings are stored in `%APPDATA%\MAHABOCW-GUI\settings.json`, with API keys DPA
 
 ## Build the installer
 
-Prerequisites: Node.js 20+ and Inno Setup 6. The `-Python` interpreter must have `gui\requirements.txt` installed.
+Prerequisites: Node.js 20+ and Inno Setup 6 or 7. The `-Python` interpreter must have `gui\requirements.txt` installed.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File gui\packaging\build.ps1 -Python .\gui_venv\Scripts\python.exe

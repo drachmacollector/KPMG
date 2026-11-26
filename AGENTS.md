@@ -85,7 +85,7 @@ The steps are:
 4. Download and checksum-verify the private Python 3.12 runtime.
 5. Inno Setup, producing `gui/packaging/Output/MAHABOCW-Setup.exe`.
 
-Requirements: Node.js 20 LTS or later, and Inno Setup 6.
+Requirements: Node.js 20 LTS or later, and Inno Setup 6 or 7.
 
 ## When you finish a change
 

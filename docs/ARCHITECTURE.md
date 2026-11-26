@@ -352,7 +352,7 @@ Fonts (Inter via `@fontsource`) and icons (`lucide-react`) are bundled, so the U
 2. **Stale-UI guard:** the build fails if `frontend_dist/index.html` is older than any file in `frontend/src`, `frontend/public` or `frontend/index.html`.
 3. `pyinstaller packaging/mahabocw_gui.spec` (onedir, windowed) produces `gui/dist/mahabocw_gui/`.
 4. Downloads the pinned python-build-standalone CPython 3.12 (`install_only`) archive, verifies it against the release's `SHA256SUMS`, and extracts it to `gui/packaging/build/runtime/`.
-5. Compiles `mahabocw_setup.iss` with Inno Setup 6 (ISCC) into `gui/packaging/Output/MAHABOCW-Setup.exe`.
+5. Compiles `mahabocw_setup.iss` with Inno Setup 6 or 7 (ISCC) into `gui/packaging/Output/MAHABOCW-Setup.exe`.
 
 ### Installer (`MAHABOCW-Setup.exe`)
 
