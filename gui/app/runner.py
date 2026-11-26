@@ -207,6 +207,13 @@ class PipelineRunner:
             self.api.push_awaiting_login()
 
     def _handle_line(self, line: str) -> None:
+        # input()'s prompt has no trailing newline, so the next event can be
+        # glued onto it: "Press ENTER ...@@MAHABOCW {...}".  Split it off.
+        idx = line.find(EVENT_PREFIX)
+        if idx > 0:
+            head, line = line[:idx], line[idx:]
+            if head.strip():
+                self._handle_line(head)
         if line.startswith(EVENT_PREFIX):
             try:
                 event = json.loads(line[len(EVENT_PREFIX):])
