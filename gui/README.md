@@ -1,145 +1,66 @@
-# MAHABOCW GUI — Developer Guide
+# MAHABOCW desktop app — developer guide
 
-This document covers the `gui/` subfolder only.  
-For the pipeline itself, see the root-level `README.md` on `main`.
+This guide covers `gui/` only: the pywebview + React/Tailwind desktop app and the installer build. For the design (bridge API, event protocol, install layout), see [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) Part B.
 
----
-
-## Branch context
-
-This code lives on the `desktop-app` branch.  
-Pipeline files (`verify_colleges.py`, `extractor.py`, etc.) are present at the **repo root** but must never be modified on this branch — see [ARCHITECTURE.md](../docs/ARCHITECTURE.md) for the full rationale.
-
----
-
-## Quick start (dev)
-
-```powershell
-# 1. Activate (or create) a dedicated venv for the GUI
-python -m venv gui_venv
-.\gui_venv\Scripts\Activate.ps1
-
-# 2. Install GUI dependencies (small, fast)
-pip install -r gui/requirements.txt
-
-# 3. Launch the app from the repo root (so imports resolve correctly)
-python -m gui.app.main
-# -- or from inside the gui/ folder:
-cd gui
-python -m app.main
-```
-
-The app opens at the Settings screen.  
-Point **Pipeline Folder** at the repo root (where `verify_colleges.py` lives) for local development.
-
----
-
-## Project structure
+## Layout
 
 ```
 gui/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # QApplication entry point
-│   ├── settings.py          # Settings dataclass + JSON persistence
-│   ├── runner.py            # PipelineRunner QThread (core subprocess logic)
-│   └── ui/
-│       ├── __init__.py
-│       ├── styles.py        # Centralised Qt stylesheet + colour palette
-│       ├── main_window.py   # QMainWindow + QStackedWidget (3 screens)
-│       ├── settings_screen.py
-│       ├── run_screen.py
-│       └── done_screen.py
+├── app/                    Python backend (no UI toolkit)
+│   ├── main.py             pywebview entry point + close guard
+│   ├── api.py              Api — the only JS bridge surface
+│   ├── runner.py           PipelineRunner — subprocess, events, stop/pause
+│   ├── settings.py         Settings, DPAPI keys, install-layout detection
+│   └── resources/          icons
+├── frontend/               React + Vite + Tailwind source
+│   └── src/{App.jsx, components/, lib/, index.css}
+├── frontend_dist/          build output (gitignored) — bundled by PyInstaller
 ├── packaging/
-│   ├── mahabocw_gui.spec    # PyInstaller build spec
-│   ├── version_info.txt     # Windows version resource
-│   ├── gui-installer.iss    # GUI Inno Setup installer script (MAHABOCW-GUI-Setup.exe)
-│   └── pipeline_installer.iss  # Pipeline Inno Setup installer (MAHABOCW-Pipeline-Setup.exe)
-├── requirements.txt         # PySide6, psutil, openpyxl only
-└── README.md                # This file
+│   ├── build.ps1           one-shot release build → Output/MAHABOCW-Setup.exe
+│   ├── mahabocw_gui.spec   PyInstaller (onedir, windowed)
+│   ├── mahabocw_setup.iss  Inno Setup — the single installer
+│   ├── setup_runtime.cmd   pip + Chromium into the private runtime (also "Repair")
+│   └── version_info.txt
+└── requirements.txt        pywebview, pythonnet, psutil, openpyxl, pyinstaller
 ```
 
----
-
-## Settings persistence
-
-Settings are stored in `%APPDATA%\MAHABOCW-GUI\settings.json`.  
-The file is never written inside the pipeline repo directory.
-
-`settings.py` also exports `default_pipeline_dir()` which returns
-`C:\ProgramData\MAHABOCW\pipeline` if `verify_colleges.py` is present there,
-or `""` otherwise. `Settings.load()` calls this automatically when `pipeline_dir`
-is empty, so the Settings screen is pre-filled after `MAHABOCW-Pipeline-Setup.exe`
-has been run — the user never needs to click Browse for that field on a fresh install.
-
----
-
-## Building the installer
-
-### 1. Install build tools (one-time)
+## Run in development
 
 ```powershell
-pip install pyinstaller
-# Install Inno Setup from https://jrsoftware.org/isinfo.php
+python -m venv gui_venv
+.\gui_venv\Scripts\Activate.ps1
+pip install -r gui\requirements.txt
+
+cd gui\frontend; npm ci; npm run build; cd ..
+python -m app.main
 ```
 
-### 2. Build the PyInstaller onedir
+When not frozen, the app uses the repo root as the pipeline folder and `python` on PATH as the interpreter. Override either under **Settings → Advanced**, for example pointing the interpreter at the pipeline venv (`..\venv\Scripts\python.exe`). The System check shows an **Ignore (dev)** link in this mode.
+
+For hot reload, run `npm run dev` in `gui\frontend` and start the app with `$env:MAHABOCW_GUI_DEV = "1"; python -m app.main`.
+
+Settings are stored in `%APPDATA%\MAHABOCW-GUI\settings.json`, with API keys DPAPI-encrypted. Run data (logs, downloads, cache) goes to `%LOCALAPPDATA%\MAHABOCW`.
+
+## Build the installer
+
+Prerequisites: Node.js 20+ and Inno Setup 6. The `-Python` interpreter must have `gui\requirements.txt` installed.
 
 ```powershell
-# From the gui/ folder:
-cd gui
-pyinstaller packaging/mahabocw_gui.spec
-# Output: gui/dist/mahabocw_gui/
+powershell -ExecutionPolicy Bypass -File gui\packaging\build.ps1 -Python .\gui_venv\Scripts\python.exe
 ```
 
-### 3. Generate the icon (if not already present)
+Output: `gui\packaging\Output\MAHABOCW-Setup.exe`. Use `-SkipInstaller` to stop after PyInstaller and the runtime download. The script fails if `frontend_dist` is older than the frontend sources, so a stale UI cannot be shipped.
 
-Place a 256×256 `.ico` file at `gui/app/resources/icon.ico`.
+To test the installer, use a clean machine or **Windows Sandbox**:
+1. Install with CPU mode.
+2. Check `C:\Program Files\MAHABOCW\install.log` ends with "finished OK".
+3. Launch the app as a standard user and follow the System check.
 
-### 4. Build the Inno Setup installers
-
-There are two independent installer scripts:
-
-**GUI installer** (`gui-installer.iss`) → `MAHABOCW-GUI-Setup.exe`
-1. Open `gui/packaging/gui-installer.iss` in **Inno Setup Compiler** and click **Build**.
-   (`gui-installer.iss` references `docs/SETUP_INSTRUCTIONS.md` at the repo root directly — no manual copy needed.)
-2. Output: `gui/packaging/Output/MAHABOCW-GUI-Setup.exe`.
-
-**Pipeline installer** (`pipeline_installer.iss`) → `MAHABOCW-Pipeline-Setup.exe`
-1. Open `gui/packaging/pipeline_installer.iss` in **Inno Setup Compiler** and click **Build**.
-   Source files are referenced two levels up from the script (the repo root), so the
-   `.py` files and `requirements-lock-cpu.txt` must be present there.
-2. Output: `gui/packaging/Output/MAHABOCW-Pipeline-Setup.exe`.
-3. Running the resulting `.exe` on a client machine:
-   - Verifies Python is on PATH (aborts with a clear message if not).
-   - Copies the pipeline `.py` files to `C:\ProgramData\MAHABOCW\pipeline`.
-   - Silently runs `pip install -r requirements-lock-cpu.txt` and
-     `playwright install chromium` (no terminal window shown to the user).
-   - All pip/playwright output is logged to
-     `C:\ProgramData\MAHABOCW\pipeline\install.log`.
-
----
-
-## Key design decisions
-
-| Decision | Rationale |
-|---|---|
-| Subprocess boundary (no `import verify_colleges`) | Pipeline files stay completely untouched; GUI runs on a separate env |
-| `PYTHONUNBUFFERED=1` injected into subprocess env | Ensures stdout arrives line-by-line when piped, not buffered |
-| `psutil.suspend()` / `.resume()` for Pause | Suspends at OS level, zero cooperation needed from the pipeline |
-| Login detection via `"Press ENTER here"` substring | Exact string from `verify_colleges.py` line 426 — update both if the pipeline prompt text ever changes |
-| ACK lines for progress (not tqdm) | tqdm's `\r`-based rewrites behave unreliably once piped; `Acknowledgement:` lines are stable |
-| `--onedir` PyInstaller mode | Faster startup, easier post-build patching vs `--onefile` |
-
----
-
-## Merging pipeline updates
-
-When `main` gets new pipeline commits:
+## Tests
 
 ```powershell
-# On the desktop-app branch:
-git merge main
-# Resolve any conflicts only in pipeline files if they were accidentally touched here.
-# The gui/ folder has no counterpart on main, so it's never in conflict.
+python -m pytest tests          # from the repo root; needs pytest + psutil
+cd gui\frontend; npm run lint
 ```
+
+`tests/test_gui_backend.py` drives `PipelineRunner` against a dummy pipeline script. It covers events, progress with skipped rows, graceful stop and force stop.

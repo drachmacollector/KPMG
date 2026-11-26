@@ -1,87 +1,73 @@
 # MAHABOCW Verification Tool — Setup Instructions
 
-Follow these steps once, in order, before using the MAHABOCW Verification Tool for
-the first time. After this one-time setup, you'll only ever need step 4.
+Do this once. After that, you only need **Step 3** each time.
 
-## Prerequisites
+## What you need
 
-- Windows 10 or later, 64-bit
-- At least 16 GB of RAM recommended (the tool runs a local AI model)
-- A stable internet connection during setup and during each run
+- Windows 10 or 11, 64-bit
+- 16 GB of RAM or more (the tool runs an AI model on this computer)
+- About 15 GB of free disk space
+- An internet connection during setup and during each run
+- Administrator rights for the installation
 - Your Gemini API key
-- **Python 3.12 or 3.13** installed with "Add Python to PATH" checked
-  (download from https://www.python.org/downloads/ — choose the latest
-  stable 3.12.x or 3.13.x release; Python 3.11 has been discontinued as a
-  primary download on python.org and is no longer required)
 
-## Step 1 — Install the pipeline
+You do **not** need to install Python. The installer brings everything it needs.
 
-Run **MAHABOCW-Pipeline-Setup.exe**  and follow
-the on-screen prompts.
+## Step 1 — Install the tool
 
-The installer will:
-- Place the pipeline files in a system folder (`C:\ProgramData\MAHABOCW\pipeline`)
-  that you never need to browse into.
-- Silently install all required Python packages (this takes several minutes —
-  the wizard progress bar will be active; no terminal window appears).
-- Download the self-contained Chromium browser component (~300 MB) used to
-  navigate the MAHABOCW portal.
+1. Run **MAHABOCW-Setup.exe** and follow the prompts.
+2. On the **Hardware Acceleration** page, keep **Standard (CPU)** unless this computer has an NVIDIA graphics card.
+3. The last part of the installation downloads components (about 1 GB). It can take 10–20 minutes, and the progress bar keeps moving while it works.
 
-A log file is written to `C:\ProgramData\MAHABOCW\pipeline\install.log`. If anything
-goes wrong during installation, share that file when asking for help.
+If an older MAHABOCW version is installed (the two separate "Pipeline" and "GUI" installers), it is removed automatically. You may need to enter your settings again.
 
-> **If you see a message that Python was not found:** install Python 3.12 or 3.13 from
-> https://www.python.org/downloads/ (tick "Add Python to PATH"), then re-run
-> MAHABOCW-Pipeline-Setup.exe.
+If the installer reports a problem, check your internet connection. Then, from the Start menu, right-click **Repair MAHABOCW components** and choose **Run as administrator**. The details are in `C:\Program Files\MAHABOCW\install.log`; share that file when asking for help.
 
-## Step 2 — Install and set up the local AI model
+## Step 2 — Set up the AI model (first launch)
 
-1. Download and install Ollama from https://ollama.com/download
-2. Once installed, open a new Command Prompt and run:
-   ```
-   ollama pull qwen2.5:7b-instruct
-   ```
-   This downloads roughly 4.7 GB and may take a while depending on your
-   internet connection. Let it finish completely before continuing.
+1. Open **MAHABOCW Verification Tool** from the Desktop or the Start menu and click **Get started**.
+2. The **System check** at the top of the screen shows what is ready:
+   - **Ollama — Not installed:** click **Download Ollama**, install it, then click **Check again**.
+   - **Ollama — Installed but not running:** click **Start Ollama**.
+   - **AI model — Not downloaded:** click **Download model**. This is about 4.7 GB, and progress is shown in the app. Keep the window open until it finishes.
+3. When every item has a green dot, you are ready.
 
-## Step 3 — Install the MAHABOCW Verification Tool
+## Step 3 — Run
 
-Run the installer (`MAHABOCW-GUI-Setup.exe`) provided alongside this document,
-and follow the on-screen prompts. A shortcut will be created on your Desktop
-and in your Start Menu.
+1. In **Set up a run**, fill in:
+   - **Claims workbook (input):** the Excel file with the claims. It is never changed.
+   - **Sheet:** chosen from the list.
+   - **Results workbook (output):** where the results are saved. Choose an existing results file to continue an earlier run.
+   - **Gemini API key** (and optionally an OpenRouter key).
+   - **Rows:** all rows, or a range (use Excel's row numbers; row 2 is the first claim).
+2. Click **Save & start**.
+3. A browser window opens. In that window:
+   1. Log in to the MAHABOCW portal, including the captcha.
+   2. Open the **Claims** section and bring the **Acknowledgement Number** column into view.
+   3. Open that column's menu (☰), click the funnel, and leave the filter box open.
+4. Go back to the tool and click **Done — start processing**.
+5. The tool now works through the claims on its own. You can **Pause** at any time, or **Stop**. Stop can wait for the current claim to finish, or stop immediately. Every finished claim is already saved, so the next run continues where this one stopped.
+6. When it finishes, the summary shows how many claims were verified, how many need manual review, and how many failed. Click **Open results in Excel**. In the results file, filter the `manual_review` column for **YES** to see the claims that need checking.
 
-## Step 4 — Configure and run
+### Result columns
 
-1. Launch **MAHABOCW Verification Tool** from the Desktop or Start Menu.
-2. On the Settings screen, fill in:
-   - **Pipeline Folder** — automatically pre-filled if Step 1 completed
-     successfully; if it is blank, browse to `C:\ProgramData\MAHABOCW\pipeline`
-   - **Input Excel File** — the claims spreadsheet you want to process
-   - **Sheet Name** — select from the dropdown once the input file is chosen
-   - **Output Excel File** — where the corrected results should be saved
-   - **Gemini API Key** — paste your key here
-   - **Python Interpreter** — leave as `python` unless Python was not added to
-     PATH, in which case browse to your `python.exe` directly
-3. Click **Save & Continue**, then click **Start**.
-4. A browser window will open automatically. Log into the MAHABOCW portal in
-   that window (including any captcha), click the **Claims** section, bring
-   the **Acknowledgement Number** column into view, and open its filter box —
-   then return to the Verification Tool window and click **"I've logged in —
-   Continue"**.
-5. The tool will process claims automatically from there. You can **Pause**,
-   **Resume**, or **Cancel** at any time from the Run screen — progress is
-   saved continuously, so cancelling and restarting later will pick up where
-   you left off.
-6. When finished, click **Open Output File** to view the results directly.
+| Column | Meaning |
+| --- | --- |
+| `corrected_college_name` / `corrected_college_address` | The verified college name and address |
+| `accuracy` | Confidence score, 0–100% |
+| `manual_review` | `YES` = please check this claim by hand |
+| `online_verification_status` | `VERIFIED`; `FAILED` (college could not be confirmed online); `NO_DOCS` (no usable bonafide or ID); `ERROR` (portal or processing problem — retried on the next run) |
+
+To re-try `FAILED` and `NO_DOCS` claims, tick **Try failed claims again** before starting.
 
 ## Troubleshooting
 
 | Problem | What to do |
-|---|---|
-| "Output Excel file is currently open" keeps appearing in the log | Close the output file if you have it open in Excel, then wait — the tool retries automatically every few seconds. |
-| The browser window doesn't open | Make sure Step 1 completed successfully; check `C:\ProgramData\MAHABOCW\pipeline\install.log` for errors and re-run MAHABOCW-Pipeline-Setup.exe if needed. |
-| A message about the AI model or Ollama appears | Make sure Ollama is installed and that `ollama pull qwen2.5:7b-instruct` finished completely (Step 2). |
-| Pipeline Folder field is blank after first launch | Browse to `C:\ProgramData\MAHABOCW\pipeline` — this means Step 1 was not yet completed or verify_colleges.py is missing from that folder. |
-| pip install failed / package errors | Open `C:\ProgramData\MAHABOCW\pipeline\install.log`, look for the failing package, and share that file when asking for help. |
-| The tool won't start / interpreter errors | Use the **Test** button next to the Python Interpreter field in Settings to confirm the path is correct. |
-| Something else goes wrong mid-run | Click **Open Latest Log File** on the completion screen (or check the `logs` folder inside the pipeline folder) for full details, and share that file when asking for help. |
+| --- | --- |
+| "Output Excel file is currently open" keeps appearing | Close the results file in Excel. The tool retries every few seconds. |
+| A System check item stays red | Click the button next to it, then **Check again**. For "Python packages" or "Chromium browser", run **Repair MAHABOCW components** as administrator. |
+| Many claims show `ERROR` | The portal filter may not be set up correctly. Stop the run, check step 3.3 in the browser, and run again (`ERROR` claims are retried). |
+| The run stops right away with "could not start" | The message lists what is missing (usually Ollama is not running, or the API key is missing). |
+| Anything else | Click **Log file** (on the Run or Done screen) and share that file when asking for help. |
+
+Downloaded claim documents are deleted after each claim by default, because they contain Aadhaar and ration-card details. Logs and the college cache are kept in `%LOCALAPPDATA%\MAHABOCW`.
