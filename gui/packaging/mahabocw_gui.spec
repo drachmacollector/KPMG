@@ -4,12 +4,12 @@ packaging/mahabocw_gui.spec
 
 PyInstaller spec for the MAHABOCW GUI — pywebview + React edition.
 
-Build order (run BOTH steps every time — a stale frontend_dist/ will
-silently ship an outdated UI with no build-time error):
-    1. npm run build   (inside gui/frontend/)
-    2. pyinstaller packaging/mahabocw_gui.spec   (from gui/)
+Do not run this by hand for a release: use packaging/build.ps1, which builds
+the frontend first (npm run build writes straight into gui/frontend_dist/)
+and refuses to package a frontend_dist older than the frontend sources.
 
-Output: gui/dist/mahabocw_gui/   (onedir, no console window)
+Output: gui/dist/mahabocw_gui/   (onedir, no console window); the installer
+places it in {app}\app\.
 
 NOTE: onedir is intentional.  onefile self-extracting binaries are flagged
 by antivirus heuristics more often, which matters for a government-client
@@ -42,7 +42,7 @@ a = Analysis(
         # App icon
         (os.path.join(GUI_ROOT, "app", "resources", "icon.ico"), "resources"),
         # Built React/Vite SPA — must match _frontend_dist_path() in app/main.py.
-        # Run `npm run build` in gui/frontend/ before this spec to keep it fresh.
+        # vite.config.js builds directly into gui/frontend_dist/.
         (os.path.join(GUI_ROOT, "frontend_dist"), "frontend_dist"),
     ],
     hiddenimports=[
